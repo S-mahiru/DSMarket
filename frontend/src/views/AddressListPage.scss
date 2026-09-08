@@ -1,0 +1,56 @@
+.address-page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 20px;
+}
+
+.address-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+
+  h2 {
+    font-size: 20px;
+    font-weight: 700;
+  }
+}
+
+.address-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.address-card {
+  .address-main {
+    margin-bottom: 8px;
+  }
+
+  .address-name {
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .address-phone {
+    margin-left: 12px;
+    font-weight: 400;
+    color: #606266;
+  }
+
+  .address-label {
+    margin-left: 8px;
+  }
+
+  .address-detail {
+    color: #606266;
+    font-size: 14px;
+    margin-top: 6px;
+  }
+}
+
+.page-loading {
+  text-align: center;
+  padding: 60px 0;
+  color: #909399;
+}

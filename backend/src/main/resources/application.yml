@@ -1,0 +1,86 @@
+server:
+  port: 8080
+
+spring:
+  profiles:
+    active: dev
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    default-property-inclusion: non_null
+
+mybatis-plus:
+  global-config:
+    db-config:
+      table-prefix: dsm_
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  configuration:
+    map-underscore-to-camel-case: true
+
+jwt:
+  # 签名密钥：dev 运行用下方 dev-only 兜底；生产务必 export JWT_SECRET=<强随机值> 注入，
+  # 勿依赖本默认（已上传公开仓库，已知值不可作生产密钥）。
+  secret: ${JWT_SECRET:dev-only-jwt-secret-8f3b21c7d94e-not-for-prod}
+  expiration: 86400
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+# ============================================
+# AI 智能客服（modules/ai）
+# ============================================
+ai:
+  llm:
+    # OpenAI 兼容 Chat 接口（决策基线：DeepSeek，可整体替换其它 OpenAI 兼容厂商）
+    base-url: ${AI_LLM_BASE_URL:https://api.deepseek.com}
+    model: ${AI_LLM_MODEL:deepseek-chat}
+    # Key 一律从环境变量注入，不落盘不提交：
+    #   优先读 AI_MARKET；未设置时回落 AI_ASSISTANT_API_KEY
+    api-key: ${AI_MARKET:${AI_ASSISTANT_API_KEY:}}
+    connect-timeout: 10s
+    read-timeout: 60s
+  embedding:
+    # 【A1 已拍板 2026-09-08】DashScope text-embedding-v3 dim=1024（实测），见 DECISION-20260908-A1。
+    # dimension=1024 决定 ds_ai_knowledge.embedding vector(1024) 建表长度（C2 建表前置，勿改）。
+    vendor: ${AI_EMBEDDING_VENDOR:dashscope}
+    model: ${AI_EMBEDDING_MODEL:text-embedding-v3}
+    dimension: 1024
+    base-url: ${AI_EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+    # Key 一律环境变量注入（不落盘不提交）。规范名 DASHSCOPE_API_KEY；
+    # 历史旧拼写 DASHSCOPE_API_KRY 兜底保留（早期误记且已按此名配置）。
+    api-key: ${DASHSCOPE_API_KEY:${DASHSCOPE_API_KRY:}}
+    connect-timeout: 5s
+    read-timeout: 15s
+  session:
+    # 会话上下文（REQ C1 §4.1/C1-F1）：Redis 单键轮条目，AI 态无 DB 表、无独立 sessionId
+    ttl: 30m        # 轮条目存活时长（滚动刷新，可调）
+    max-rounds: 8   # 组装给模型的最近轮数（可调）
+  inflight:
+    # AI 单飞行（REQ C1 E12）：同 userId 一处在途生成 → 第二路 HTTP 409
+    ttl: 15m        # 锁兜底 TTL（正常路径 finally 释放）
+  chat:
+    # SSE /chat 正式通道（REQ C1 §3/§9）
+    max-tool-rounds: 3   # Agent 工具轮次上限（C1-F3：达上限仍要工具 → error TOO_MANY_TOOL_ROUNDS）
+    rate-limit: 20       # 每用户每分钟消息数（§9 假设；超出 → 开流前 HTTP 429）
+    rate-window: 1m
+    dedup-ttl: 30s       # clientMsgId 幂等：30s 内同键重复 → 仅回 200 done
+    sse-timeout: 3m      # SseEmitter 服务端超时（到时 complete，防死连接）
+  search:
+    # C2 双路检索引擎（REQ-20260907 C2 §3/§9，全部"可调参数"落地为配置；调权/阈值实验只改这里）
+    topk-bm25: 20        # BM25 路召回数（F1 TOPK_BM25）
+    topk-dense: 20       # Dense 路召回数（F2 TOPK_DENSE）
+    rrf-k: 60            # RRF 融合常数（F3 RRF_K，score=Σ 1/(K+rank)）
+    final-top: 10        # 融合后取 top N 作候选（F3 FINAL_TOP）
+    conf-min: 0.015      # 置信闸（F4 CONF_MIN 初值；top1 融合分低于它 → 低置信返回空）
+    # RRF 加权（档④，C2 §7）：默认 1.0=等权基线（档③）；w 网格只改这里
+    weight-bm25: 1.0     # w_bm25
+    weight-dense: 1.0    # w_dense
+    # 相似度幅度闸（F4 #3，闭合 DECISION-20260908-C2 §2 gap）：top1 dense 相似度 < 它 → 低置信；
+    # 0=关闭（标定前无行为变化）；标定（train-only）后置定稿值
+    dense-min-sim: 0.0

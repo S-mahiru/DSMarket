@@ -1,0 +1,32 @@
+# ===== 构建产物 / 运行期文件 =====
+backend/target/
+backend/uploads/
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+deploy/nginx/runtime/
+
+# ===== 日志 / JVM 崩溃转储 =====
+logs/
+*.log
+hs_err_*.log
+replay_pid*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ===== 环境 / 本地敏感 =====
+# 提交非敏感默认 frontend/.env.development(.production)（仅 URL）；本地私有一律忽略
+.env
+.env.local
+.env.*.local
+
+# ===== 本地工具/会话 =====
+.claude/
+
+# ===== IDE / OS =====
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

@@ -1,0 +1,53 @@
+.admin-layout {
+  height: 100vh;
+}
+
+.admin-sidebar {
+  background: #304156;
+
+  .admin-logo {
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 18px;
+    font-weight: 700;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-bottom: 1px solid #e4e7ed;
+  gap: 12px;
+  height: 64px;
+  padding: 0 24px;
+
+  .collapse-btn {
+    cursor: pointer;
+    font-size: 18px;
+    display: inline-flex;
+  }
+
+  .header-title {
+    flex: 1;
+    font-size: 16px;
+    font-weight: 500;
+  }
+
+  .user-info {
+    cursor: pointer;
+    color: #303133;
+  }
+}
+
+.admin-main {
+  background: #f0f2f5;
+  // antd Row gutter 负 margin 会让内容区横向多出 8px，隐藏横向溢出避免滚动条
+  overflow-x: hidden;
+}

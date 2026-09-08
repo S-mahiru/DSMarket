@@ -1,0 +1,50 @@
+# ============================================
+# DSMarket 生产环境配置
+# 启动：SPRING_PROFILES_ACTIVE=prod java -jar dsmarket-backend-1.0.0.jar
+# 本机模拟生产默认连 localhost 的 dsmarket_prod 库；上云时用环境变量覆盖。
+# 注意：生产环境务必通过环境变量设置强密码 DB_PASSWORD，勿使用默认值。
+# ============================================
+spring:
+  datasource:
+    # 独立生产库 dsmarket_prod（与 dev 的 dsmarket 隔离）
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dsmarket_prod}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 3s
+  # 生产关闭 SQL stdout 日志（经 MyBatis 参数 SQL 已由 log-impl 接管）
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+
+server:
+  port: ${SERVER_PORT:8080}
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+
+# 上传文件磁盘目录（/uploads/** 由此目录提供）
+web:
+  upload:
+    dir: ${UPLOAD_DIR:./uploads}
+  cors:
+    # 站点实际来源（含端口）：浏览器对 POST 会带 Origin 头，即使同源也会被后端 CORS 校验拦截。
+    # 本机模拟生产由 Nginx 提供站点（8088），必须放行该源；上云时改为 CORS_ORIGINS=https://你的域名。
+    allowed-origins: ${CORS_ORIGINS:http://localhost:8088}
+
+# 应用日志写文件 + 控制台
+logging:
+  file:
+    name: ${LOG_DIR:./logs}/dsmarket.log
+  level:
+    root: info
+    com.dsmarket: info

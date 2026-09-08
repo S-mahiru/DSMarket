@@ -1,0 +1,16 @@
+# 集成测试专用配置：独立测试库，不污染开发数据
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/dsmarket_test
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+mybatis-plus:
+  configuration:
+    # 测试环境关闭 SQL 日志，避免输出噪音
+    map-underscore-to-camel-case: true

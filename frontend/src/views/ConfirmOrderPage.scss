@@ -1,0 +1,163 @@
+.checkout-page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 20px;
+}
+
+.checkout-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 20px;
+}
+
+.checkout-card {
+  margin-bottom: 16px;
+}
+
+.checkout-address-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.checkout-address-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  width: 100%;
+  height: auto;
+
+  .checkout-address-name {
+    font-weight: 600;
+  }
+
+  .checkout-address-phone {
+    margin-left: 12px;
+    font-weight: 400;
+    color: #606266;
+  }
+
+  .checkout-address-default {
+    margin-left: 8px;
+    color: #f5222d;
+    font-size: 12px;
+  }
+
+  .checkout-address-detail {
+    margin-top: 4px;
+    color: #606266;
+    font-size: 14px;
+  }
+}
+
+.checkout-address-manage {
+  margin-top: 8px;
+}
+
+.checkout-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px dashed #f0f0f0;
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.checkout-item-img {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #f5f5f5;
+}
+
+.checkout-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.checkout-item-name {
+  font-weight: 500;
+}
+
+.checkout-item-specs {
+  margin-top: 4px;
+  color: #909399;
+  font-size: 12px;
+}
+
+.checkout-item-price {
+  width: 90px;
+  text-align: right;
+  color: #606266;
+}
+
+.checkout-item-qty {
+  width: 60px;
+  text-align: center;
+  color: #606266;
+}
+
+.checkout-item-subtotal {
+  width: 110px;
+  text-align: right;
+  font-weight: 600;
+}
+
+.checkout-remark {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+
+  > span {
+    width: 64px;
+    flex-shrink: 0;
+    line-height: 32px;
+    color: #606266;
+  }
+}
+
+.checkout-remark-input {
+  flex: 1;
+}
+
+.checkout-summary {
+  border-top: 1px solid #f0f0f0;
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.checkout-summary-row {
+  display: flex;
+  justify-content: space-between;
+  width: 260px;
+  color: #606266;
+
+  &.checkout-summary-total {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1d2129;
+  }
+}
+
+.checkout-amount {
+  color: #f5222d;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.checkout-submit {
+  text-align: right;
+  margin-top: 8px;
+}

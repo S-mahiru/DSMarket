@@ -1,0 +1,24 @@
+.payment-result-page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 40px 20px;
+}
+
+.payment-result-card {
+  padding: 8px 0;
+}
+
+.payment-result-detail {
+  text-align: center;
+  color: #606266;
+  margin-top: 4px;
+
+  p {
+    margin: 4px 0;
+  }
+
+  b {
+    color: #f5222d;
+    font-size: 18px;
+  }
+}
