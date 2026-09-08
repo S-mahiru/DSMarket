@@ -1,0 +1,151 @@
+.order-detail-page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 24px 20px;
+}
+
+.order-detail-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.order-detail-card {
+  margin-bottom: 16px;
+}
+
+.order-receiver {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.order-receiver-name {
+  font-weight: 600;
+}
+
+.order-receiver-phone {
+  margin-left: 12px;
+  font-weight: 400;
+  color: #606266;
+}
+
+.order-receiver-addr {
+  color: #606266;
+}
+
+.order-item-head,
+.order-item-row {
+  display: grid;
+  grid-template-columns: 1fr 100px 80px 110px;
+  align-items: center;
+  gap: 12px;
+}
+
+.order-item-head {
+  color: #909399;
+  font-size: 13px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f0f0f0;
+  text-align: right;
+
+  span:first-child {
+    text-align: left;
+  }
+}
+
+.order-item-row {
+  padding: 12px 0;
+  border-bottom: 1px dashed #f0f0f0;
+  text-align: right;
+  color: #606266;
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.order-item-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+}
+
+.order-item-img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #f5f5f5;
+}
+
+.order-item-name {
+  font-weight: 500;
+  color: #1d2129;
+}
+
+.order-item-specs {
+  margin-top: 4px;
+  color: #909399;
+  font-size: 12px;
+}
+
+.order-item-subtotal {
+  color: #1d2129;
+  font-weight: 600;
+}
+
+.order-detail-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+
+  > div:first-child {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: #606266;
+    font-size: 14px;
+  }
+}
+
+.order-amount-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 220px;
+
+  > div {
+    display: flex;
+    justify-content: space-between;
+    color: #606266;
+  }
+}
+
+.order-amount-total {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1d2129;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 8px;
+
+  b {
+    color: #f5222d;
+    font-size: 20px;
+    font-weight: 700;
+  }
+}
+
+.order-detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 16px;
+  margin-top: 16px;
+}

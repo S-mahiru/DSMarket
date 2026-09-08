@@ -1,0 +1,46 @@
+# DSMarket 开发环境依赖：PostgreSQL 16 + Redis 7
+# 用法：
+#   启动：  docker compose up -d
+#   停止：  docker compose down
+#   清数据：docker compose down -v   （删除数据卷，重新初始化 V1/V2 脚本）
+
+services:
+  postgres:
+    # 自定义镜像：postgres:16-alpine + zhparser（中文分词，供商品全文检索）
+    build: ./deploy/postgres
+    image: dsmarket-postgres:16-zhparser
+    container_name: dsmarket-postgres
+    environment:
+      POSTGRES_DB: dsmarket
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      TZ: Asia/Shanghai
+    ports:
+      - "5432:5432"
+    volumes:
+      # 首次初始化时自动执行 V1 建表 + V2 种子数据（按文件名顺序）
+      - ./backend/src/main/resources/db:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dsmarket"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    container_name: dsmarket-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  pgdata:
+  redisdata:

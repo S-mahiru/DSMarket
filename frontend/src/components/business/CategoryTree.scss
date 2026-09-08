@@ -1,0 +1,20 @@
+.category-tree {
+  .category-item {
+    padding: 6px 8px;
+    cursor: pointer;
+    color: #303133;
+    font-size: 14px;
+    border-radius: 4px;
+
+    &:hover {
+      color: #1677ff;
+      background: #f0f5ff;
+    }
+
+    &.active {
+      color: #1677ff;
+      font-weight: 600;
+      background: #f0f5ff;
+    }
+  }
+}
