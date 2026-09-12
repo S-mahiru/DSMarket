@@ -19,6 +19,14 @@ public class Product extends BaseEntity {
     private String brief;
     private String description;
     private Long categoryId;
+    /**
+     * 归属店铺ID。**`null` = 平台自营**（ADMIN 在后台建的商品），见 REQ-20260912 §4.3。
+     *
+     * <p>隔离判据。两条硬规则（§4.4）：① 本字段**绝不来自请求参数** —— 一律由服务端从
+     * {@code SecurityContext} → {@code dsm_shop} 解析后赋值；② 商家侧 by-id 操作必须先经
+     * {@code requireOwnedProduct} 校验归属，不复用无校验的 admin 方法。
+     */
+    private Long shopId;
     private String brand;
     private String unit;
     private BigDecimal price;

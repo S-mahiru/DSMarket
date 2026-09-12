@@ -40,41 +40,61 @@ public class ProductSearchServiceImpl implements ProductSearchService {
 
     @Override
     public PageResult<ProductListVO> search(int page, int size, ProductQuery query) {
-        return searchInternal(page, size, query, true);
+        return searchInternal(page, size, query, true, null);
     }
 
     @Override
     public PageResult<ProductListVO> searchAllStatus(int page, int size, ProductQuery query) {
-        return searchInternal(page, size, query, false);
+        return searchInternal(page, size, query, false, null);
+    }
+
+    @Override
+    public PageResult<ProductListVO> searchByShop(int page, int size, ProductQuery query, Long shopId) {
+        // 这里**故意抛异常而不是把 null 当"不筛"**：null 一旦被静默接受，本方法就退化成
+        // 全平台检索 —— 越权结果是"正常返回一页别家商品"，不报错、不留痕，最难发现。
+        // shopId 只可能来自服务端解析，为 null 说明调用方写错了，应当立刻炸掉。
+        if (shopId == null) {
+            throw new IllegalArgumentException("searchByShop 的 shopId 不能为 null（会退化成全平台检索）");
+        }
+        return searchInternal(page, size, query, false, shopId);
     }
 
     /**
-     * @param onlyOnSale true=商城侧只查上架（status=1）；false=管理端不过滤状态
+     * @param onlyOnSale true=商城侧只查上架（status=1）；false=管理端/商家侧不过滤状态
+     * @param shopId     非 null=只查该店铺（商家侧）；null=不按店铺筛（商城/管理端）
      */
-    private PageResult<ProductListVO> searchInternal(int page, int size, ProductQuery query, boolean onlyOnSale) {
+    private PageResult<ProductListVO> searchInternal(int page, int size, ProductQuery query, boolean onlyOnSale, Long shopId) {
         String keyword = query != null ? (query.getKeyword() == null ? null : query.getKeyword().trim()) : null;
 
         if (StringUtils.hasText(keyword)) {
             // 1) 先走全文检索（中文分词 + GIN 索引）
-            PageResult<ProductListVO> ft = doSearch(page, size, query, true, onlyOnSale);
+            PageResult<ProductListVO> ft = doSearch(page, size, query, true, onlyOnSale, shopId);
             if (!ft.getRecords().isEmpty()) {
                 return ft;
             }
             // 2) 全文检索零命中 → LIKE 兜底（防生僻词/标点分词不中导致漏搜）
-            return doSearch(page, size, query, false, onlyOnSale);
+            return doSearch(page, size, query, false, onlyOnSale, shopId);
         }
         // 无关键词：普通筛选 + 排序（不走全文检索，保持与历史一致）
-        return doSearch(page, size, query, null, onlyOnSale);
+        return doSearch(page, size, query, null, onlyOnSale, shopId);
     }
 
     /**
      * @param useFulltext true=全文检索；false=LIKE 兜底；null=无关键词仅筛选
      * @param onlyOnSale  true=只查上架；false=不过滤状态
+     * @param shopId      非 null=只查该店铺；null=不按店铺筛
      */
-    private PageResult<ProductListVO> doSearch(int page, int size, ProductQuery query, Boolean useFulltext, boolean onlyOnSale) {
+    private PageResult<ProductListVO> doSearch(int page, int size, ProductQuery query, Boolean useFulltext,
+                                               boolean onlyOnSale, Long shopId) {
         LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
         if (onlyOnSale) {
             wrapper.eq(Product::getStatus, 1);
+        }
+        // 店铺隔离。放在关键词/兜底分支**之前**是刻意的：它是**安全条件**而非筛选条件，
+        // 必须无条件生效 —— 全文检索与 LIKE 兜底是两次独立的 doSearch 调用，隔离写在这里
+        // 才能保证两条路径都带上它（写在某个分支里会漏掉另一条）。
+        if (shopId != null) {
+            wrapper.eq(Product::getShopId, shopId);
         }
 
         if (Boolean.TRUE.equals(useFulltext)) {
