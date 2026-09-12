@@ -47,6 +47,23 @@ public final class RoundWindow {
     }
 
     /**
+     * 按 replyId 反查轮条目（主 REQ §2.4 feedback 回查数据源）。
+     * 会话窗口物理只留最近 maxRounds 轮（Redis 值已被 trim）+ TTL 滚动 → 超窗回复返回 null，
+     * 调用方据此按"回查失败 → 200 静默忽略"处理，不额外持久化旁路。
+     */
+    public static ChatRound findRound(List<ChatRound> rounds, String replyId) {
+        if (rounds == null || rounds.isEmpty() || replyId == null) {
+            return null;
+        }
+        for (ChatRound round : rounds) {
+            if (replyId.equals(round.getReplyId())) {
+                return round;
+            }
+        }
+        return null;
+    }
+
+    /**
      * 把历史轮次 + 当轮问句组装成发给模型的 messages：
      * system（新鲜注入，不入库）→ 每轮 user/assistant 交替 → 末尾当前 user。
      */
