@@ -71,6 +71,11 @@ ai:
     rate-window: 1m
     dedup-ttl: 30s       # clientMsgId 幂等：30s 内同键重复 → 仅回 200 done
     sse-timeout: 3m      # SseEmitter 服务端超时（到时 complete，防死连接）
+    # AI 态用户问句上限（§2/§9：500，可调参数，口径是"注入/成本"）。
+    # 长度是分层的：超 500 且**未命中转人工锚点** → 400；命中锚点则豁免本上限（长申诉可达转人工
+    # 口子），只受 ChatRequest 的绝对上限 4000 约束。校验在 open() 内、**排在分流判定之后**
+    # （§2 明文"锚点检测先于长度校验"）。
+    content-max: 500
   search:
     # C2 双路检索引擎（REQ-20260907 C2 §3/§9，全部"可调参数"落地为配置；调权/阈值实验只改这里）
     topk-bm25: 20        # BM25 路召回数（F1 TOPK_BM25）
@@ -78,9 +83,87 @@ ai:
     rrf-k: 60            # RRF 融合常数（F3 RRF_K，score=Σ 1/(K+rank)）
     final-top: 10        # 融合后取 top N 作候选（F3 FINAL_TOP）
     conf-min: 0.015      # 置信闸（F4 CONF_MIN 初值；top1 融合分低于它 → 低置信返回空）
-    # RRF 加权（档④，C2 §7）：默认 1.0=等权基线（档③）；w 网格只改这里
+    # RRF 加权（档④，C2 §7；切片4 标定 2026-09-08）：train 网格 wb∈{0..4}（wd=1）全平坦，④≡③(等权)，
+    # 写回等权 w=1/1 —— H2 如实证伪：中小语料下加权收益有限，等权已够（且保 R5 降级安全，勿改 wb=0）
     weight-bm25: 1.0     # w_bm25
     weight-dense: 1.0    # w_dense
-    # 相似度幅度闸（F4 #3，闭合 DECISION-20260908-C2 §2 gap）：top1 dense 相似度 < 它 → 低置信；
-    # 0=关闭（标定前无行为变化）；标定（train-only）后置定稿值
-    dense-min-sim: 0.0
+    # 相似度幅度闸（F4 #3，闭合 DECISION-20260908-C2 §2 gap）：融合 top1 在 Dense 路有席位(dr>0)时
+    # 其余弦相似度 < 它 → 低置信（拒绝无关问句）。0=关闭；标定后定稿 0.60：
+    # train 相关集 45/45 留存、OOD 12 中拒 11（2026-09-08，见 ai-experiments/c2-slice4）。
+    # 残余已知：近域 OOD（如"顺丰加急/当天到"时效问句）相似度≈0.76 会越过该闸 → 留 C3/C4 案例池复核。
+    dense-min-sim: 0.60
+  issue:
+    # C3-F6 向量化兜底（REQ-20260907 C3 I9/I10）：采纳受理但向量化失败 → 知识 draft + issue pending 留存，
+    # 定时任务每分钟重试（采纳即发布 / 修复后自动发布）。单条重试达上限 log.warn 告警（仍每分钟重试，不静默丢）。
+    retry-max: 5
+  support:
+    # C4 转人工与坐席工作台（REQ-20260907-C4 §4/§9）。全部"可调参数"落地为配置：
+    # 阈值实验只改这里，不碰业务代码。
+    # 坐席在线接缝实现：redis=心跳驱动（切片 2 起缺省）；offline=恒无人在线（演示诚实留言降级用）。
+    # 注意 offline 下工作台接口仍在但永远无人在线（OfflineSeatPresence.markOnline 会打告警）。
+    seat-presence: ${AI_SUPPORT_SEAT_PRESENCE:redis}
+    rate-limit: 10          # 人工态发消息 10 次/分/用户（§4.4：低于 /chat 的 20，防骚扰坐席；超限 429）
+    rate-window: 1m
+    dedup-ttl: 5s           # clientMsgId 幂等保留时长（§4.4 P6：5s 内重复 → 200 不重落库）
+    user-content-max: 2000  # 买家留言上限（§3.2；与 /chat 的 500 不同——人工通道允许完整申诉）
+    agent-content-max: 4000 # 坐席回复上限（§3.2）
+    heartbeat: 15s          # 坐席心跳间隔（§4.2）
+    seat-offline-ttl: 45s   # 坐席在线键 TTL，45s 无刷新判离线（§4.2）
+    wait-timeout: 30s       # 坐席在线但无人接入的等待阈值（§4.3）
+    stream-timeout: 30m     # 人工态 SSE 常驻通道超时（§4.7/§4.8；到时前端按"先快照后增量"重连）
+    ai-summary-rounds: 5    # 工作台回放 AI 对话轮数（§4.5 L 决议 N=5，Redis 原文直读不加 LLM）
+    # F6 触发③（未解决≥2）：本会话累计"低置信轮 + 点踩"达该值 → suggest(UNRESOLVED) 气泡，
+    # 会话仍 ai_active、点后才转（H5）。计数落 Redis dsm:ai:unresolved:{userId}，TTL = ai.session.ttl。
+    unresolved-threshold: ${AI_SUPPORT_UNRESOLVED_THRESHOLD:2}
+    # C4 切片 3 转人工锚点词集（主 REQ §5.1 HUMAN_REQUEST，权威完整）。子串匹配。
+    # §10 A10 把"锚点词集"列为**误伤率**可调项 → 收敛口径只改这里，不碰代码。
+    human-request-anchors:
+      - 人工客服
+      - 人工
+      - 真人
+      - 转人工
+      - 找个人
+      - 找你们领导
+      - 投诉
+      - 投诉电话
+      - 12315
+    # F6 情绪/投诉锚点词集（C4 §4.6 触发②的初始词表，可调）。
+    # 【2026-09-10 裁决】§4.6 原设计是命中 → 只加 suggest 气泡（会话仍 ai_active，H5 点后才转），
+    # 但"投诉"与上面 §5.1 权威 HUMAN_REQUEST 词集**重叠**，同一句话在两条规则下行为相反。
+    # 裁决：重叠按**直接转人工**处理 —— 本词集整体并入自动转人工口（origin 仍记 ANCHOR_HIT），
+    # **不再下发 suggest 气泡**。这是对 §4.6 触发②的有意收窄，见 DECISION-20260910-C4-切片3。
+    # 与上面的锚点词集分开维护只为留痕可追溯到各自的需求条款，判定本身不做区分。
+    human-request-emotion-anchors:
+      - 投诉
+      - 气死
+      - 你们骗人
+      - 太差
+      - 差评
+      - 退款都不行
+    # 匹配前先从原文剔除的已知误伤口径（替换为空格）。
+    # 裸词锚点「人工」「真人」误伤面最大：前者怕"人工呼吸/人工智能"，后者怕"真人秀/真人版/真人CS"
+    # （电商语境里问真人CS装备完全正常）。此表是**初版种子**，需按 §10 A10 用真实问句收敛。
+    human-request-exclusions:
+      - 人工呼吸
+      - 人工智能
+      - 人工湖
+      - 人工降雨
+      - 人工增雨
+      - 真人秀
+      - 真人版
+      - 真人CS
+      - 真人cs
+  eval:
+    # C5 效果评估与留痕（REQ-20260908-C5 §1/§2）：JSON Lines 落盘，毕设不建新表。
+    # 留痕是**纯观察**——写日志失败只记日志，绝不改变对话/转人工语义与事件协议。
+    enabled: ${AI_EVAL_ENABLED:true}   # 总开关；false = 只跳过落盘，埋点代码照跑（§6.5 回归对照）
+    dir: ${AI_EVAL_DIR:logs/ai-eval}   # 相对进程工作目录（从 backend 启动 → backend/logs/ai-eval）
+    # userIdHash 的盐（HMAC-SHA256）。**改盐即断链**：历史哈希与新日志对不上，
+    # P2-H3 沉淀曲线没法按用户 join —— 论文数据一旦开始采就固定此值。
+    # 缺省值只是本地占位（§7 已把"敏感字段本地环境存储"列为前提）；接真人数据前从环境变量注入。
+    hash-salt: ${AI_EVAL_HASH_SALT:dsmarket-ai-eval-local}
+    content-max: 500   # 日志里问句原文截断上限（§2 content「≤500」；只影响留痕，不影响对话）
+    # 答复原文截断上限（§2 未列补充键 answer）。比问句宽得多：答复没有 500 的产品上限，
+    # 截太短会把长答复的后半段判据切掉，反而制造错误的低分。超出部分写成可见标记，不静默丢。
+    answer-max: 2000
+    event-seq-max: 40  # eventSeq 事件数上限，超出折成 …+N（答复长度无上限，不封顶单行会膨胀）
