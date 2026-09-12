@@ -118,6 +118,20 @@
 
     <build>
         <plugins>
+            <!--
+              JDK 21 默认禁止动态 attach，Mockito 的 inline mock maker 起不来：所有用到 mock() 的
+              测试类会以 "Could not initialize plugin: interface org.mockito.plugins.MockMaker" 报错
+              （实测 227 个 Error，与沙箱无关）。加这个标志让 Byte Buddy 能自 attach。
+              判据（区分环境问题与代码回归）：不用 Mockito 的测试类若全绿，就是环境问题。
+              该标志在任何机器上都无副作用，故直接写进构建配置，避免每次 mvn test 都要手打。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>-Djdk.attach.allowAttachSelf=true</argLine>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
