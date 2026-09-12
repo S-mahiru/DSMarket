@@ -1,5 +1,6 @@
 package com.dsmarket.modules.ai.tool.impl;
 
+import com.dsmarket.modules.ai.search.FusionHit;
 import com.dsmarket.modules.ai.search.KnowledgeSearchResult;
 import com.dsmarket.modules.ai.search.KnowledgeSegment;
 import com.dsmarket.modules.ai.service.KnowledgeSearchService;
@@ -46,19 +47,66 @@ public class SearchKnowledgeTool implements ChatTool {
         NOT_COVERED
     }
 
-    /** run() 的判别结果：type + 供 TOOL 回填的 content（NOT_COVERED 时 content=null）。 */
-    public record KnowledgeToolResult(KnowledgeOutcomeType type, String content) {
+    /**
+     * 检索摘要 —— REQ-20260908-C5 §2 AI 轮日志 {@code retrieval} 字段的数据源。
+     *
+     * <p><b>为什么在工具出口取而不是让留痕层自己去查</b>：{@code topScore} 与两路席位只在
+     * 引擎返回对象上存在，出了 {@link #run} 就再也拿不到（NOT_COVERED 时尤其如此——
+     * 结果对象被丢弃，只剩一个"没覆盖"的结论）。低置信轮恰恰是论文里最需要看的一档，
+     * 丢掉它的检索数据等于把评估的关键样本挖空。</p>
+     *
+     * @param kind    实际有席位的路：两路都有 → {@code rrf}；仅 BM25 → {@code bm25}；
+     *                仅 Dense → {@code dense}；都缺席（含 embedding 降级整路缺席）→ {@code none}。
+     *                §2 给了这四个取值，此处按"谁真的召回了"解释它们，而不是按"哪条路被调用过"
+     *                —— 后者在降级时会把一条空跑的路记成有贡献。
+     * @param topScore 融合 top1 分（F4 闸用的那个分）
+     * @param topCategory 首条命中的类目；无命中（低置信/双空）时为 null
+     * @param conf    {@code high}/{@code low}，与 {@link KnowledgeSearchResult#isCovered()} 同源
+     */
+    public record RetrievalTrace(String kind, double topScore, String topCategory, String conf) {
 
-        public static KnowledgeToolResult covered(String content) {
-            return new KnowledgeToolResult(KnowledgeOutcomeType.COVERED, content);
+        static RetrievalTrace of(KnowledgeSearchResult r) {
+            List<FusionHit> candidates = r.getCandidates() == null ? List.of() : r.getCandidates();
+            boolean bm25 = candidates.stream().anyMatch(h -> h.getBm25Rank() > 0);
+            boolean dense = candidates.stream().anyMatch(h -> h.getDenseRank() > 0);
+            String kind = bm25 && dense ? "rrf" : bm25 ? "bm25" : dense ? "dense" : "none";
+            return new RetrievalTrace(kind, r.getTopScore(), topCategoryOf(r), r.isCovered() ? "high" : "low");
+        }
+
+        /**
+         * 首条命中类目：优先取 F6 组织后的片段（真正喂给模型的那条），
+         * 低置信时片段为空 → 回退到融合候选首位（记下"最接近的是什么类目"，
+         * 这是分析"差多远才算低置信"的唯一线索）。
+         */
+        private static String topCategoryOf(KnowledgeSearchResult r) {
+            List<KnowledgeSegment> segs = r.getSegments();
+            if (segs != null && !segs.isEmpty()) {
+                return segs.get(0).getCategory();
+            }
+            List<FusionHit> candidates = r.getCandidates();
+            if (candidates != null && !candidates.isEmpty() && candidates.get(0).getSegment() != null) {
+                return candidates.get(0).getSegment().getCategory();
+            }
+            return null;
+        }
+    }
+
+    /**
+     * run() 的判别结果：type + 供 TOOL 回填的 content（NOT_COVERED 时 content=null）
+     * + 检索摘要（NO_ARG 时 null —— 那一档根本没检索，写个空对象会与"检索了但没命中"混淆）。
+     */
+    public record KnowledgeToolResult(KnowledgeOutcomeType type, String content, RetrievalTrace retrieval) {
+
+        public static KnowledgeToolResult covered(String content, RetrievalTrace retrieval) {
+            return new KnowledgeToolResult(KnowledgeOutcomeType.COVERED, content, retrieval);
         }
 
         public static KnowledgeToolResult noArg() {
-            return new KnowledgeToolResult(KnowledgeOutcomeType.NO_ARG, NO_ARG_TOOL_TEXT);
+            return new KnowledgeToolResult(KnowledgeOutcomeType.NO_ARG, NO_ARG_TOOL_TEXT, null);
         }
 
-        public static KnowledgeToolResult notCovered() {
-            return new KnowledgeToolResult(KnowledgeOutcomeType.NOT_COVERED, null);
+        public static KnowledgeToolResult notCovered(RetrievalTrace retrieval) {
+            return new KnowledgeToolResult(KnowledgeOutcomeType.NOT_COVERED, null, retrieval);
         }
     }
 
@@ -116,9 +164,9 @@ public class SearchKnowledgeTool implements ChatTool {
         KnowledgeSearchResult r = knowledgeSearchService.search(query);
         if (!r.isCovered() || r.getSegments() == null || r.getSegments().isEmpty()) {
             // 引擎低置信/冲突/双路空 → 空 top-k，由 C1 走 FAQ 兜底（REQ §3.4 / C2 §3.6 R4/R6/R9）
-            return KnowledgeToolResult.notCovered();
+            return KnowledgeToolResult.notCovered(RetrievalTrace.of(r));
         }
-        return KnowledgeToolResult.covered(render(r.getSegments()));
+        return KnowledgeToolResult.covered(render(r.getSegments()), RetrievalTrace.of(r));
     }
 
     /** 片段渲染文本（COVERED 喂回模型的正文）：每条「【类目】question\nanswer」，≤3 条用空行分隔。 */
