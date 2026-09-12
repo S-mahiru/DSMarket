@@ -143,8 +143,12 @@ const router = createBrowserRouter([
           },
           {
             path: 'merchant/apply',
+            // role="USER"（REQ-20260912 §4.2）：只有买家能申请入驻。
+            // MERCHANT 已有店铺（后端再申请会 409），ADMIN 后端直接 400「管理员无需入驻」——
+            // 两者都不该走到这张表单前面。**被驳回的商家不受影响**：驳回不改 role
+            // （ShopServiceImpl.adminAudit 只在 status==1 时升级），被驳回者仍是 USER。
             element: (
-              <RequireAuth>
+              <RequireAuth role="USER">
                 <MerchantApplyPage />
               </RequireAuth>
             ),

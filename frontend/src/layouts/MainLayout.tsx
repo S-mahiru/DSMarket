@@ -14,12 +14,19 @@ export default function MainLayout() {
   const logout = useUserStore((s) => s.logout)
   const cartCount = useCartStore((s) => s.count)
 
+  // 商家入口按 role 三选一（REQ-20260912 §4.2）。**ADMIN 一个都不给**：
+  // 入驻会被后端直接 400「管理员无需入驻」（ShopServiceImpl:38-40），商家中心会被
+  // `/merchant/**` 的 hasRole("MERCHANT") 挡成 403 —— 给入口等于给一个必然失败的按钮。
+  const shopEntry = isAdmin
+    ? []
+    : isMerchant
+      ? [{ key: 'merchant', label: '商家中心', onClick: () => navigate('/merchant') }]
+      : [{ key: 'merchantApply', label: '商家入驻', onClick: () => navigate('/merchant/apply') }]
+
   const userMenuItems = [
     { key: 'profile', label: '个人中心', onClick: () => navigate('/profile') },
     { key: 'orders', label: '我的订单', onClick: () => navigate('/orders') },
-    ...(isMerchant
-      ? [{ key: 'merchant', label: '商家中心', onClick: () => navigate('/merchant') }]
-      : [{ key: 'merchantApply', label: '商家入驻', onClick: () => navigate('/merchant/apply') }]),
+    ...shopEntry,
     ...(isAdmin ? [{ key: 'admin', label: '管理后台', onClick: () => navigate('/admin') }] : []),
     { type: 'divider' as const },
     { key: 'logout', label: '退出登录', onClick: () => logout() }
