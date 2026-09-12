@@ -10,6 +10,8 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -79,6 +81,26 @@ class RoundWindowTest {
         assertEquals(List.of(ChatRole.SYSTEM, ChatRole.USER, ChatRole.ASSISTANT, ChatRole.USER), roles);
         assertEquals("答二", msgs.get(2).getContent());
         assertEquals("问三", msgs.get(3).getContent());
+    }
+
+    @Test
+    void findRound_returnsMatchingRound() {
+        List<ChatRound> rounds = new ArrayList<>();
+        rounds.add(round("1", "问一", "答一"));
+        rounds.add(round("2", "问二", "答二"));
+        assertSame(rounds.get(0), RoundWindow.findRound(rounds, "1"));
+        assertSame(rounds.get(1), RoundWindow.findRound(rounds, "2"));
+        assertEquals("问二", RoundWindow.findRound(rounds, "2").getUserContent());
+    }
+
+    @Test
+    void findRound_missingOrEmptyReturnsNull() {
+        List<ChatRound> rounds = new ArrayList<>();
+        rounds.add(round("1", "问一", "答一"));
+        assertNull(RoundWindow.findRound(rounds, "99"), "不存在的 replyId → null（超窗/回查失败）");
+        assertNull(RoundWindow.findRound(rounds, null));
+        assertNull(RoundWindow.findRound(new ArrayList<>(), "1"));
+        assertNull(RoundWindow.findRound(null, "1"));
     }
 
     @Test
