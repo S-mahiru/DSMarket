@@ -1,5 +1,6 @@
 import { Layout, Menu, Dropdown } from 'antd'
 import {
+  CustomerServiceOutlined,
   DashboardOutlined,
   ShopOutlined,
   ShoppingOutlined,
@@ -22,7 +23,10 @@ const MENU_ITEMS = [
   { key: '/admin/categories', icon: <TagsOutlined />, label: '分类管理' },
   { key: '/admin/orders', icon: <UnorderedListOutlined />, label: '订单管理' },
   { key: '/admin/users', icon: <UserOutlined />, label: '用户管理' },
-  { key: '/admin/shops', icon: <ShopOutlined />, label: '店铺审核' }
+  { key: '/admin/shops', icon: <ShopOutlined />, label: '店铺审核' },
+  // key 必须**等于路由前缀**：headerTitle 用 `startsWith` 反查、selectedKeys 是精确匹配，
+  // 所以工作台保持单层扁平路由（`/admin/ai/support`），不要往下再分子路由。
+  { key: '/admin/ai/support', icon: <CustomerServiceOutlined />, label: 'AI客服工作台' }
 ]
 
 export default function AdminLayout() {

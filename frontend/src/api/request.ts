@@ -7,8 +7,11 @@ const TOKEN_KEY = 'dsm_token'
 const USER_KEY = 'dsm_user'
 
 // 开发/生产均走同源 /api/v1，由 Vite dev proxy 或 Nginx 反向代理到后端
+// 导出给流层复用：SSE 不走 axios（见 api/sse.ts 顶部说明），但必须打同一个 base
+export const API_BASE: string = import.meta.env.VITE_API_BASE || '/api/v1'
+
 const request: AxiosInstance = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || '/api/v1',
+  baseURL: API_BASE,
   timeout: 15000,
   headers: {
     'Content-Type': 'application/json'

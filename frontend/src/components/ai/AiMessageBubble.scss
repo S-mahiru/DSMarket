@@ -1,0 +1,133 @@
+.ai-msg {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 14px;
+
+  &--user {
+    align-items: flex-end;
+  }
+
+  &--assistant {
+    align-items: flex-start;
+  }
+
+  &--system {
+    align-items: center;
+  }
+}
+
+.ai-msg__tools {
+  margin-bottom: 6px;
+
+  .ant-tag {
+    margin-inline-end: 4px;
+    font-size: 12px;
+  }
+}
+
+.ai-msg__bubble {
+  max-width: 82%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: break-word;
+  white-space: pre-wrap; // 模型输出里的换行要保留，否则答案会挤成一段
+
+  .ai-msg--user & {
+    background: #1677ff;
+    color: #fff;
+    border-top-right-radius: 2px;
+  }
+
+  .ai-msg--assistant & {
+    background: #fff;
+    color: #303133;
+    border: 1px solid #ebeef5;
+    border-top-left-radius: 2px;
+  }
+
+  .ai-msg--system & {
+    // SYSTEM 消息（"客服已接入"、坐席不在线提示等）是**服务端原话**，居中弱化显示
+    background: #f0f2f5;
+    color: #909399;
+    font-size: 12px;
+    max-width: 92%;
+  }
+}
+
+.ai-msg__caret {
+  display: inline-block;
+  width: 2px;
+  height: 13px;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  animation: ai-caret-blink 1s step-end infinite;
+}
+
+@keyframes ai-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.ai-msg__badge {
+  margin-top: 4px;
+  color: #909399;
+  font-size: 11px;
+}
+
+.ai-msg__suggest {
+  margin-top: 6px;
+  padding: 5px 12px;
+  border: 1px solid #1677ff;
+  border-radius: 14px;
+  background: #fff;
+  color: #1677ff;
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover {
+    background: #ecf5ff;
+  }
+}
+
+.ai-msg__error {
+  margin-top: 4px;
+  color: #f56c6c;
+  font-size: 12px;
+}
+
+.ai-msg__note {
+  margin-top: 4px;
+  color: #909399;
+  font-size: 12px;
+}
+
+.ai-feedback {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+
+  button {
+    border: none;
+    background: transparent;
+    color: #909399;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0 2px;
+
+    &:hover:not(:disabled) {
+      color: #1677ff;
+    }
+
+    &.is-active {
+      color: #1677ff;
+    }
+
+    &:disabled {
+      cursor: default;
+    }
+  }
+}

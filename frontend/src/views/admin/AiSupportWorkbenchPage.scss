@@ -1,0 +1,45 @@
+// `.admin-main` 是 flex:auto 的列子项（父级 .admin-layout 是 height:100vh），
+// 高度是确定的，所以这里能用 100% 把整条高度链传下去。
+// 链子断在任何一环（少写 min-height:0），就会变成"整页一个滚动条"而不是"三列各自滚"。
+.workbench {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.workbench__seat {
+  flex: none;
+  margin-bottom: 12px;
+}
+
+.workbench__state {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.workbench__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 12px;
+}
+
+.workbench__board {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.workbench__detail {
+  flex: none;
+  width: 420px;
+  min-height: 0;
+}

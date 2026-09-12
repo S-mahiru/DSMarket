@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { setToken, removeToken, setUser, getUser, getToken } from '@/api/request'
 import { login as apiLogin, register as apiRegister, logout as apiLogout } from '@/api/auth'
 import { getProfile as apiGetProfile } from '@/api/user'
+import { resetAiStreams } from '@/api/aiStreams'
 import type { LoginResult, UserInfo } from '@/types/api'
 
 interface UserState {
@@ -57,6 +58,9 @@ export const useUserStore = create<UserState>((set) => ({
   logout() {
     apiLogout().catch(() => {})
     removeToken()
+    // 两条常驻 AI 通道必须在这里断：`logout()` 自己不导航（`MainLayout` 是裸调的），
+    // 若挂在路由变化上，登出后连接会带着已失效的 token 继续活着并无限 401 重连。
+    resetAiStreams()
     set({ token: null, userInfo: null, isLoggedIn: false, isAdmin: false, isMerchant: false, nickname: '' })
   },
 

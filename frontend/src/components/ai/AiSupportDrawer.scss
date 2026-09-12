@@ -1,0 +1,66 @@
+.ai-drawer {
+  // 抽屉自己不做滚动：整条高度链交给内部的 .ai-panel 分配，
+  // 否则"消息列表滚"会变成"整个抽屉一起滚"，输入框会被顶出屏幕。
+  .ant-drawer-body {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+}
+
+.ai-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.ai-panel__title,
+.ai-drawer__title {
+  font-size: 15px;
+}
+
+.ai-panel__status {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #fff;
+  border-bottom: 1px solid #ebeef5;
+  font-size: 12px;
+
+  .ant-tag {
+    margin-inline-end: 0;
+  }
+}
+
+.ai-panel__tip {
+  color: #606266;
+  line-height: 1.5;
+}
+
+// 转人工请求在飞时的过渡提示（此时输入框被禁用，不能只是变灰了事）。
+// 与 .ai-panel__status 同族但**不是**状态栏：它表达的是"这一次请求"而非"会话处于什么状态"。
+.ai-panel__transferring {
+  flex: none;
+  padding: 6px 16px;
+  background: #fdf6ec;
+  border-top: 1px solid #faecd8;
+  color: #b88230;
+  font-size: 12px;
+}
+
+.ai-panel__loading,
+.ai-panel__guest {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  color: #606266;
+  font-size: 13px;
+}

@@ -1,0 +1,36 @@
+.ai-msg-list {
+  flex: 1;
+  min-height: 0; // flex 子项默认 min-height:auto，不置 0 的话内容会把容器撑高、滚动条跑到外层的抽屉上
+  overflow-y: auto;
+  padding: 16px 16px 8px;
+  background: #f7f8fa;
+}
+
+.ai-msg-list__empty {
+  padding: 24px 8px;
+  color: #606266;
+  text-align: center;
+  font-size: 13px;
+}
+
+.ai-msg-list__quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 16px;
+
+  button {
+    padding: 6px 12px;
+    border: 1px solid #d9ecff;
+    border-radius: 14px;
+    background: #fff;
+    color: #1677ff;
+    font-size: 12px;
+    cursor: pointer;
+
+    &:hover {
+      background: #ecf5ff;
+    }
+  }
+}
