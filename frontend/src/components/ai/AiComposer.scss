@@ -1,0 +1,26 @@
+.ai-composer {
+  flex: none;
+  padding: 10px 12px 12px;
+  border-top: 1px solid #ebeef5;
+  background: #fff;
+}
+
+.ai-composer__hint {
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: #fdf6ec;
+  color: #e6a23c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ai-composer__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+
+  .ant-input {
+    resize: none;
+  }
+}

@@ -3,6 +3,7 @@ import { Badge, Dropdown } from 'antd'
 import { ShoppingCartOutlined } from '@ant-design/icons'
 import { useUserStore } from '@/stores/user'
 import { useCartStore } from '@/stores/cart'
+import AiSupportWidget from '@/components/ai/AiSupportWidget'
 import './MainLayout.scss'
 
 export default function MainLayout() {
@@ -64,6 +65,10 @@ export default function MainLayout() {
       <main className="main-content">
         <Outlet />
       </main>
+      {/* 放在 </main> **之外**：挂在 main-content 里会继承它的内边距与溢出，
+          悬浮定位会跟着内容偏移。这个位置也天然等于"买家面"——登录/注册走 BlankLayout、
+          后台走 AdminLayout，都不会渲染到这里，所以不需要维护路由白名单。 */}
+      <AiSupportWidget />
     </div>
   )
 }

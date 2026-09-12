@@ -27,6 +27,7 @@ import CategoryManagePage from '@/views/admin/CategoryManagePage'
 import OrderManagePage from '@/views/admin/OrderManagePage'
 import UserManagePage from '@/views/admin/UserManagePage'
 import ShopManagePage from '@/views/admin/ShopManagePage'
+import AiSupportWorkbenchPage from '@/views/admin/AiSupportWorkbenchPage'
 import MerchantApplyPage from '@/views/MerchantApplyPage'
 import MerchantCenterPage from '@/views/MerchantCenterPage'
 
@@ -183,7 +184,9 @@ const router = createBrowserRouter([
           { path: 'categories', element: <CategoryManagePage />, handle: { title: '分类管理' } },
           { path: 'orders', element: <OrderManagePage />, handle: { title: '订单管理' } },
           { path: 'users', element: <UserManagePage />, handle: { title: '用户管理' } },
-          { path: 'shops', element: <ShopManagePage />, handle: { title: '店铺审核' } }
+          { path: 'shops', element: <ShopManagePage />, handle: { title: '店铺审核' } },
+          // C4 §4.5 坐席工作台。路径必须与 AdminLayout 的 MENU_ITEMS key 一致（见那里的注释）
+          { path: 'ai/support', element: <AiSupportWorkbenchPage />, handle: { title: 'AI客服工作台' } }
         ]
       },
 

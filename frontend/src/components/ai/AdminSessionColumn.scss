@@ -1,0 +1,61 @@
+.ai-col {
+  display: flex;
+  flex-direction: column;
+  // min-height:0 是这一列**自己**能滚、而不是把整页撑高的关键
+  min-height: 0;
+  background: #fafafa;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.ai-col__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: #fff;
+  border-bottom: 1px solid #ebeef5;
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.ai-col__count {
+  min-width: 22px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #f0f2f5;
+  color: #606266;
+  font-size: 12px;
+  font-weight: 400;
+  text-align: center;
+}
+
+.ai-col__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.ai-col__empty {
+  margin: 24px 0 0;
+  text-align: center;
+  color: #c0c4cc;
+  font-size: 12px;
+}
+
+// 三列各自一点颜色倾向，扫一眼就知道哪列是排队
+.ai-col--queued .ai-col__head {
+  color: #d46b08;
+}
+
+.ai-col--active .ai-col__head {
+  color: #389e0d;
+}
+
+.ai-col--left .ai-col__head {
+  color: #531dab;
+}
