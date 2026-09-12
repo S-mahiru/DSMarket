@@ -34,4 +34,22 @@ public interface ProductSearchService {
      * @return 商品分页结果
      */
     PageResult<ProductListVO> searchAllStatus(int page, int size, ProductQuery query);
+
+    /**
+     * 商家侧检索：**只返回 {@code shopId} 这一家店铺的商品**，不过滤状态（商家要看得见自家已下架商品）。
+     *
+     * <p><b>为什么 {@code shopId} 是独立参数、而不是 {@link ProductQuery} 的一个字段</b>：
+     * {@code ProductQuery} 是检索层入参对象，在 Controller 上由 {@code @ModelAttribute} 从
+     * <b>请求参数</b>绑定 —— 把店铺ID放进去，等于把隔离开关交给客户端（改一个 query string
+     * 就能读别家商品）。独立参数只能由服务端从 {@code SecurityContext} → {@code dsm_shop}
+     * 解析后传入，客户端无从设置。这是 REQ-20260912 §4.4 硬规则 1。</p>
+     *
+     * <p><b>平台自营商品（{@code shop_id IS NULL}）不会出现在结果里</b> —— 判据是
+     * {@code shop_id = :shopId} 的等值匹配，NULL 不参与等值比较。这正是 §10 第 2 条要的。</p>
+     *
+     * @param shopId 店铺ID。<b>必须非 null</b>：null 会退化成"全平台商品"，
+     *               而那正是本方法要防的越权，故实现里直接拒绝而不做 null 兜底
+     * @return 该店铺的商品分页结果
+     */
+    PageResult<ProductListVO> searchByShop(int page, int size, ProductQuery query, Long shopId);
 }
