@@ -1,31 +1,10 @@
 import request from '@/api/request'
 import type { PageResult } from '@/types/api'
-import type { ProductDetail, ProductListVO, SpecItem } from '@/types/product'
+import type { ProductDetail, ProductFormData, ProductListVO } from '@/types/product'
 
-export interface ProductSkuForm {
-  skuCode: string
-  price: number
-  originalPrice?: number
-  stock: number
-  specs: SpecItem[]
-}
-
-export interface ProductFormData {
-  name: string
-  title?: string
-  brief?: string
-  description?: string
-  categoryId: number
-  brand?: string
-  unit?: string
-  price: number
-  originalPrice?: number
-  stock: number
-  mainImage?: string
-  isFeatured: number
-  status: number
-  skus: ProductSkuForm[]
-}
+// 表单类型已上移到 types/product.ts（商家端共用同一份，避免两处各写一份而漂移）。
+// 这里保留 re-export，既有 `from '@/api/admin/product'` 的引用不受影响。
+export type { ProductFormData, ProductSkuForm } from '@/types/product'
 
 export function getAdminProducts(params: {
   page?: number
