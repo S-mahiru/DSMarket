@@ -9,6 +9,7 @@ import com.dsmarket.modules.product.dto.ProductQuery;
 import com.dsmarket.modules.product.entity.Product;
 import com.dsmarket.modules.product.mapper.ProductMapper;
 import com.dsmarket.modules.product.service.ProductSearchService;
+import com.dsmarket.modules.product.support.ProductVisibility;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -38,14 +39,52 @@ public class ProductSearchServiceImpl implements ProductSearchService {
     private final ProductMapper productMapper;
     private final CategoryService categoryService;
 
+    /**
+     * 检索作用域：决定「查谁的商品」以及「过不过滤公开可见性」。
+     *
+     * <p><b>为什么收敛成一个对象而不是继续加布尔参数</b>：原先 {@code searchInternal(...)}
+     * 已经吃 {@code (onlyOnSale, shopId)} 两个位置参数，再加"自营"就成三个相邻的布尔/长整型，
+     * 调用处写反一个（例如把 {@code onlyOnSale} 传成 {@code selfOperatedOnly}）**不会有任何编译错误**，
+     * 故障形态是"某个入口静默查错了范围"。工厂方法把每种业务口径钉成一个有名字的调用。</p>
+     *
+     * <p>各个工厂的取值组合即本 REQ 的核心契约，改这里等于改全站口径，务必对照 §4.8 的四个落点。</p>
+     */
+    private record Scope(boolean onlyOnSale, Long shopId, boolean selfOperatedOnly) {
+
+        /** 商城侧全站：只上架 + 公开可见 */
+        static Scope storefront() {
+            return new Scope(true, null, false);
+        }
+
+        /** 管理端：**不过滤**状态（要看得见已下架），也不套店铺可见性 */
+        static Scope admin() {
+            return new Scope(false, null, false);
+        }
+
+        /** 商家侧：**不过滤**状态（商家要看得见自家已下架商品），限本店 */
+        static Scope merchant(Long shopId) {
+            return new Scope(false, shopId, false);
+        }
+
+        /** 前台店铺页：只上架 + 公开可见 + 限该店 */
+        static Scope publicShop(Long shopId) {
+            return new Scope(true, shopId, false);
+        }
+
+        /** 前台自营专区：只上架 + 公开可见，且 {@code shop_id IS NULL} */
+        static Scope selfOperated() {
+            return new Scope(true, null, true);
+        }
+    }
+
     @Override
     public PageResult<ProductListVO> search(int page, int size, ProductQuery query) {
-        return searchInternal(page, size, query, true, null);
+        return searchInternal(page, size, query, Scope.storefront());
     }
 
     @Override
     public PageResult<ProductListVO> searchAllStatus(int page, int size, ProductQuery query) {
-        return searchInternal(page, size, query, false, null);
+        return searchInternal(page, size, query, Scope.admin());
     }
 
     @Override
@@ -56,45 +95,64 @@ public class ProductSearchServiceImpl implements ProductSearchService {
         if (shopId == null) {
             throw new IllegalArgumentException("searchByShop 的 shopId 不能为 null（会退化成全平台检索）");
         }
-        return searchInternal(page, size, query, false, shopId);
+        return searchInternal(page, size, query, Scope.merchant(shopId));
     }
 
-    /**
-     * @param onlyOnSale true=商城侧只查上架（status=1）；false=管理端/商家侧不过滤状态
-     * @param shopId     非 null=只查该店铺（商家侧）；null=不按店铺筛（商城/管理端）
-     */
-    private PageResult<ProductListVO> searchInternal(int page, int size, ProductQuery query, boolean onlyOnSale, Long shopId) {
+    @Override
+    public PageResult<ProductListVO> searchPublicByShop(int page, int size, ProductQuery query, Long shopId) {
+        // 同 searchByShop：null 会退化成"全站商城检索"，故障是"店铺页列出全平台商品"，必须立刻炸掉
+        if (shopId == null) {
+            throw new IllegalArgumentException("searchPublicByShop 的 shopId 不能为 null（会退化成全站商城检索）");
+        }
+        return searchInternal(page, size, query, Scope.publicShop(shopId));
+    }
+
+    @Override
+    public PageResult<ProductListVO> searchSelfOperated(int page, int size, ProductQuery query) {
+        return searchInternal(page, size, query, Scope.selfOperated());
+    }
+
+    private PageResult<ProductListVO> searchInternal(int page, int size, ProductQuery query, Scope scope) {
         String keyword = query != null ? (query.getKeyword() == null ? null : query.getKeyword().trim()) : null;
 
         if (StringUtils.hasText(keyword)) {
             // 1) 先走全文检索（中文分词 + GIN 索引）
-            PageResult<ProductListVO> ft = doSearch(page, size, query, true, onlyOnSale, shopId);
+            PageResult<ProductListVO> ft = doSearch(page, size, query, true, scope);
             if (!ft.getRecords().isEmpty()) {
                 return ft;
             }
             // 2) 全文检索零命中 → LIKE 兜底（防生僻词/标点分词不中导致漏搜）
-            return doSearch(page, size, query, false, onlyOnSale, shopId);
+            return doSearch(page, size, query, false, scope);
         }
         // 无关键词：普通筛选 + 排序（不走全文检索，保持与历史一致）
-        return doSearch(page, size, query, null, onlyOnSale, shopId);
+        return doSearch(page, size, query, null, scope);
     }
 
     /**
      * @param useFulltext true=全文检索；false=LIKE 兜底；null=无关键词仅筛选
-     * @param onlyOnSale  true=只查上架；false=不过滤状态
-     * @param shopId      非 null=只查该店铺；null=不按店铺筛
+     * @param scope       检索作用域（决定状态过滤、店铺可见性、店铺隔离）
      */
     private PageResult<ProductListVO> doSearch(int page, int size, ProductQuery query, Boolean useFulltext,
-                                               boolean onlyOnSale, Long shopId) {
+                                               Scope scope) {
         LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
-        if (onlyOnSale) {
+        if (scope.onlyOnSale()) {
             wrapper.eq(Product::getStatus, 1);
+            // 商城侧再叠加「公开可见」判据（REQ-20260913 §4.8 落点 1）：所属店铺被关闭/驳回/
+            // 软删的商品，即使自身 status=1 也不再对 C 端可见。
+            // **挂在 onlyOnSale 分支内是刻意的**：管理端 searchAllStatus 与商家侧 searchByShop
+            // 用的都是 Scope.admin()/Scope.merchant()（onlyOnSale=false），必须照常看得到这些商品
+            // （商家要能管理自家已关闭店铺的商品）。
+            ProductVisibility.apply(wrapper);
         }
         // 店铺隔离。放在关键词/兜底分支**之前**是刻意的：它是**安全条件**而非筛选条件，
         // 必须无条件生效 —— 全文检索与 LIKE 兜底是两次独立的 doSearch 调用，隔离写在这里
         // 才能保证两条路径都带上它（写在某个分支里会漏掉另一条）。
-        if (shopId != null) {
-            wrapper.eq(Product::getShopId, shopId);
+        if (scope.shopId() != null) {
+            wrapper.eq(Product::getShopId, scope.shopId());
+        } else if (scope.selfOperatedOnly()) {
+            // 自营 = shop_id IS NULL。**不能用 eq(null)**：SQL 里 NULL = NULL 恒为 UNKNOWN，
+            // 会静默返回空列表，看着像"自营专区没有商品"而不是写错了。
+            wrapper.isNull(Product::getShopId);
         }
 
         if (Boolean.TRUE.equals(useFulltext)) {

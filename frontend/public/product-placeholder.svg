@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="暂无图片">
+  <!-- REQ-20260913 §12.3 D11：后台三处商品图兜底的中性占位。
+       配色与商城侧 ProductCard 的 .product-card-placeholder 对齐（底 #f5f5f5 / 前景 #c0c4cc），
+       这样 admin、merchant、商城三处缩略图看起来是同一套。 -->
+  <rect width="64" height="64" fill="#f5f5f5"/>
+  <rect x="14" y="19" width="36" height="26" rx="3" fill="none" stroke="#c0c4cc" stroke-width="3"/>
+  <circle cx="24" cy="28" r="3.5" fill="#c0c4cc"/>
+  <path d="M17 42l9-9 7 7 6-5 8 7" fill="none" stroke="#c0c4cc" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

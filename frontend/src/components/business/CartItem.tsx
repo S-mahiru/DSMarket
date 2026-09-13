@@ -18,7 +18,7 @@ export default function CartItem({ item, onCheck, onQuantity, onRemove }: Props)
         onChange={(e) => onCheck(item.id, e.target.checked)}
         className="cart-check"
       />
-      <img src={item.productImage || '/favicon.svg'} alt="" className="cart-img" />
+      <img src={item.productImage || '/product-placeholder.svg'} alt="" className="cart-img" />
       <div className="cart-info">
         <div className="cart-name">{item.productName}</div>
         {item.skuSpecs.length > 0 && (

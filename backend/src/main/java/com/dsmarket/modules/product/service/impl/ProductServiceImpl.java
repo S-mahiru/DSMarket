@@ -21,6 +21,9 @@ import com.dsmarket.modules.product.mapper.ProductMapper;
 import com.dsmarket.modules.product.mapper.ProductSkuMapper;
 import com.dsmarket.modules.product.service.ProductSearchService;
 import com.dsmarket.modules.product.service.ProductService;
+import com.dsmarket.modules.product.support.ProductVisibility;
+import com.dsmarket.modules.shop.entity.Shop;
+import com.dsmarket.modules.shop.mapper.ShopMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +46,7 @@ public class ProductServiceImpl implements ProductService {
     private final ProductSkuMapper productSkuMapper;
     private final CategoryMapper categoryMapper;
     private final ProductSearchService productSearchService;
+    private final ShopMapper shopMapper;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -57,21 +61,130 @@ public class ProductServiceImpl implements ProductService {
         return productSearchService.searchAllStatus(page, size, query);
     }
 
+    // ==================== 商家侧（REQ-20260912 §4.4 / §4.5）====================
+
+    @Override
+    public PageResult<ProductListVO> merchantPage(Long userId, int page, int size, ProductQuery query) {
+        Long shopId = requireActiveShopId(userId);
+        return productSearchService.searchByShop(page, size, query, shopId);
+    }
+
+    @Override
+    public ProductDetailVO getMerchantDetail(Long userId, Long id) {
+        Long shopId = requireActiveShopId(userId);
+        return buildDetail(requireOwnedProduct(id, shopId));
+    }
+
+    @Override
+    @Transactional
+    public Long createForShop(Long userId, ProductFormDTO form) {
+        Long shopId = requireActiveShopId(userId);
+        Product product = new Product();
+        applyForm(product, form);
+        // 归属**只在这里赋值**，来源是上面解析出的店铺。ProductFormDTO 里根本没有 shopId 字段，
+        // 客户端多传的 shopId 连绑定都不会发生（§10 第 5 条）。
+        product.setShopId(shopId);
+        productMapper.insert(product);
+        saveSkus(product.getId(), form.getSkus());
+        return product.getId();
+    }
+
+    @Override
+    @Transactional
+    public void updateForShop(Long userId, Long id, ProductFormDTO form) {
+        Long shopId = requireActiveShopId(userId);
+        Product existing = requireOwnedProduct(id, shopId);
+        applyForm(existing, form);
+        // 显式重设：applyForm 本来就不碰 shopId（现有值会原样保留），这一行是把
+        // "归属不可被表单改写"这条规则钉在代码里，而不是靠"读 applyForm 发现它没写"来保证。
+        existing.setShopId(shopId);
+        productMapper.updateById(existing);
+        // SKU 批量替换：与 admin 侧同构（删旧插新）。此处已过归属校验，id 一定是自家的
+        productSkuMapper.delete(new LambdaQueryWrapper<ProductSku>().eq(ProductSku::getProductId, id));
+        saveSkus(id, form.getSkus());
+    }
+
+    @Override
+    public void updateStatusForShop(Long userId, Long id, Integer status) {
+        Long shopId = requireActiveShopId(userId);
+        Product product = requireOwnedProduct(id, shopId);
+        product.setStatus(status);
+        productMapper.updateById(product);
+    }
+
+    /**
+     * 当前用户的**已开通**店铺ID。所有商家侧操作的入口闸。
+     *
+     * <p>无店铺（未入驻）或店铺未开通 → **403**（§4.4 异常行）。403 而非 404 是刻意的：
+     * 这里拒绝的是"你这个账号没有商家身份"，与"某个商品存不存在"无关，不涉及资源泄露。
+     * 注意与下面 {@link #requireOwnedProduct} 的 404 区分开。</p>
+     */
+    private Long requireActiveShopId(Long userId) {
+        Shop shop = shopMapper.selectOne(new LambdaQueryWrapper<Shop>()
+                .eq(Shop::getUserId, userId)
+                .last("LIMIT 1"));
+        if (shop == null) {
+            throw new BusinessException(ErrorCode.FORBIDDEN.getCode(), "尚未入驻，无商家权限");
+        }
+        if (!Integer.valueOf(1).equals(shop.getStatus())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN.getCode(), "店铺未开通，无商家权限");
+        }
+        return shop.getId();
+    }
+
+    /**
+     * 归属校验：**所有**商家侧 by-id 操作的第一道闸，必须先过它再做任何事。
+     *
+     * <p>两种失败都返回 **404，而不是 403**（§8）：403 等于告诉对方"这个 id 是存在的，
+     * 只是不归你"，可以拿来枚举全平台商品；404 让"不存在"和"不归你"无法区分。</p>
+     *
+     * <p>顺带覆盖了两种情况：商品已被逻辑删除（{@code selectById} 带 {@code @TableLogic}
+     * → 返回 null），以及平台自营商品（{@code shop_id IS NULL}）—— 后者与任何 shopId
+     * 都不相等，商家碰不到自营商品（§10 第 3 条）。</p>
+     */
+    private Product requireOwnedProduct(Long productId, Long shopId) {
+        Product product = productMapper.selectById(productId);
+        if (product == null || !shopId.equals(product.getShopId())) {
+            throw new BusinessException(ErrorCode.NOT_FOUND.getCode(), "商品不存在");
+        }
+        return product;
+    }
+
+    // ==================== 前台公开（REQ-20260913 §4.6 / §4.7）====================
+
+    @Override
+    public PageResult<ProductListVO> publicShopPage(int page, int size, ProductQuery query, Long shopId) {
+        return productSearchService.searchPublicByShop(page, size, query, shopId);
+    }
+
+    @Override
+    public PageResult<ProductListVO> selfOperatedPage(int page, int size, ProductQuery query) {
+        return productSearchService.searchSelfOperated(page, size, query);
+    }
+
     @Override
     public List<ProductListVO> getFeatured(int limit) {
-        List<Product> list = productMapper.selectList(
-                new LambdaQueryWrapper<Product>()
-                        .eq(Product::getIsFeatured, 1)
-                        .eq(Product::getStatus, 1)
-                        .orderByDesc(Product::getSales)
-                        .last("LIMIT " + Math.min(limit, 20)));
-        return list.stream().map(ProductListVO::from).toList();
+        LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<Product>()
+                .eq(Product::getIsFeatured, 1)
+                .eq(Product::getStatus, 1)
+                .orderByDesc(Product::getSales);
+        // 首页推荐同属商城侧，口径须与列表页逐字一致（§4.8 落点 2）。
+        // 漏掉这里，关闭店铺的商品会在首页"继续营业"，而列表里已经查不到 —— 两处口径分叉。
+        ProductVisibility.apply(wrapper);
+        wrapper.last("LIMIT " + Math.min(limit, 20));
+        return productMapper.selectList(wrapper).stream().map(ProductListVO::from).toList();
     }
 
     @Override
     public ProductDetailVO getDetail(Long id) {
-        Product product = productMapper.selectById(id);
-        if (product == null || product.getStatus() != 1) {
+        // 公开详情的可见性口径必须与列表、首页推荐**逐字一致**（§4.8 落点 3）。
+        // 判据自带 status = 1，原先那句 product.getStatus() != 1 的检查并入其中。
+        // 于是"直接按 URL 访问已关闭店铺的商品"同样落 404，不会出现"列表看不到、详情打得开"。
+        LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Product::getId, id);
+        ProductVisibility.apply(wrapper);
+        Product product = productMapper.selectOne(wrapper);
+        if (product == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND.getCode(), "商品不存在或已下架");
         }
         return buildDetail(product);
@@ -107,6 +220,12 @@ public class ProductServiceImpl implements ProductService {
         vo.setHasSku(product.getHasSku());
         vo.setIsFeatured(product.getIsFeatured());
         vo.setStatus(product.getStatus());
+        // 商家行（REQ-20260913 §4.5）。shopId 为 null 即平台自营，前端走 /shop/self。
+        // 公开详情走到这里时，可见性判据已保证所属店铺 status=1 且未软删，故 shopName 必能解析出来；
+        // 管理端/商家端看到已关闭店铺的详情时 shopName 可能为 null（selectById 被 @TableLogic 滤掉），
+        // 这是可接受的——shopId 仍在，足够定位。
+        vo.setShopId(product.getShopId());
+        vo.setShopName(resolveShopName(product.getShopId()));
 
         // SKU 列表 + specDims
         List<ProductSku> skus = productSkuMapper.selectList(
@@ -230,6 +349,21 @@ public class ProductServiceImpl implements ProductService {
         }
         Category category = categoryMapper.selectById(categoryId);
         return category != null ? category.getName() : null;
+    }
+
+    /**
+     * 店铺名（REQ-20260913 §4.5）。{@code shopId == null} = 平台自营，返回 null 让前端渲染「平台自营」。
+     *
+     * <p>只取名字，**不返回整个 Shop 实体** —— 公开详情是匿名可访问的，返回实体即泄漏
+     * {@code userId}/{@code status}/{@code auditRemark}。这也正是公开店铺另立 {@code ShopPublicVO}
+     * 的同一条理由。</p>
+     */
+    private String resolveShopName(Long shopId) {
+        if (shopId == null) {
+            return null;
+        }
+        Shop shop = shopMapper.selectById(shopId);
+        return shop != null ? shop.getShopName() : null;
     }
 
     private List<SpecItem> parseSpecs(String json) {
