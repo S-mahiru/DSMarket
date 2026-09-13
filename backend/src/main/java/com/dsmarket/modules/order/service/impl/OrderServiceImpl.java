@@ -31,6 +31,7 @@ import com.dsmarket.modules.product.entity.Product;
 import com.dsmarket.modules.product.entity.ProductSku;
 import com.dsmarket.modules.product.mapper.ProductMapper;
 import com.dsmarket.modules.product.mapper.ProductSkuMapper;
+import com.dsmarket.modules.product.support.ProductPurchaseGuard;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -62,6 +63,7 @@ public class OrderServiceImpl implements OrderService {
     private final ProductSkuMapper productSkuMapper;
     private final ObjectMapper objectMapper;
     private final OrderNoGenerator orderNoGenerator;
+    private final ProductPurchaseGuard productPurchaseGuard;
 
     @Override
     @Transactional(timeout = 30, rollbackFor = Exception.class)
@@ -86,10 +88,9 @@ public class OrderServiceImpl implements OrderService {
         BigDecimal total = BigDecimal.ZERO;
         List<OrderItem> orderItems = new ArrayList<>();
         for (Cart cart : carts) {
-            Product product = productMapper.selectById(cart.getProductId());
-            if (product == null || product.getStatus() != 1) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "商品已下架或不存在");
-            }
+            // 原先是 selectById + 只看 product.status —— 完全没看店铺状态（Q6 实测缺口）。
+            // 改走守门人后，判定与读侧同源（ProductVisibility 常量），顺带省掉一次查询。
+            Product product = productPurchaseGuard.requirePurchasable(cart.getProductId());
             ProductSku sku = cart.getSkuId() != null ? productSkuMapper.selectById(cart.getSkuId()) : null;
             if (cart.getSkuId() != null && (sku == null || sku.getStatus() != 1)) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "商品规格已失效: " + product.getName());

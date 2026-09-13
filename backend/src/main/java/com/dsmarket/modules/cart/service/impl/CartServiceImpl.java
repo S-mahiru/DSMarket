@@ -12,6 +12,7 @@ import com.dsmarket.modules.product.entity.Product;
 import com.dsmarket.modules.product.entity.ProductSku;
 import com.dsmarket.modules.product.mapper.ProductMapper;
 import com.dsmarket.modules.product.mapper.ProductSkuMapper;
+import com.dsmarket.modules.product.support.ProductPurchaseGuard;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +35,7 @@ public class CartServiceImpl implements CartService {
     private final ProductMapper productMapper;
     private final ProductSkuMapper productSkuMapper;
     private final ObjectMapper objectMapper;
+    private final ProductPurchaseGuard productPurchaseGuard;
 
     @Override
     @Transactional
@@ -41,6 +43,10 @@ public class CartServiceImpl implements CartService {
         if (quantity == null || quantity <= 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "数量需大于0");
         }
+        // 加购前先过「可购买」判据（Q6 拍板「甲」）。此前本方法**根本不加载商品**，
+        // 于是店铺被关闭后仍能加购（真机实测 HTTP 200），甚至商品 id 不存在也能塞进购物车
+        // ——后者会让 /cart/count 把一个前台看不见的行算进角标。两处一并由守门人挡掉。
+        productPurchaseGuard.requirePurchasable(productId);
         Cart existing = cartMapper.selectOne(new LambdaQueryWrapper<Cart>()
                 .eq(Cart::getUserId, userId)
                 .eq(Cart::getProductId, productId)

@@ -1,21 +1,26 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Button, Input, Modal, Popconfirm, Select, Space, Table, Tag, message } from 'antd'
-import { auditShop, getAdminShops } from '@/api/admin/shop'
+import { auditShop, closeShop, getAdminShops } from '@/api/admin/shop'
 import PageError from '@/components/business/PageError'
+import { SHOP_STATUS } from '@/types/shop'
 import type { ShopAdminVO } from '@/types/shop'
 
 const STATUS_FILTERS = [
   { value: undefined, label: '全部' },
-  { value: 0, label: '待审核' },
-  { value: 1, label: '已开通' },
-  { value: 2, label: '已驳回' }
+  { value: SHOP_STATUS.PENDING, label: '待审核' },
+  { value: SHOP_STATUS.OPEN, label: '已开通' },
+  { value: SHOP_STATUS.REJECTED, label: '已驳回' },
+  { value: SHOP_STATUS.CLOSED, label: '已关闭' }
 ]
 
+// 「已驳回」与「已关闭」是**两个不同状态**（REQ-20260913-店铺关闭能力 §4.2 方案甲）：
+// 驳回可改资料重来，关闭是终局。文案与颜色都必须分开，否则管理员会以为关掉的店还能再申请。
 function statusTag(status: number) {
   const map: Record<number, { color: string; label: string }> = {
-    0: { color: 'orange', label: '待审核' },
-    1: { color: 'green', label: '已开通' },
-    2: { color: 'red', label: '已驳回' }
+    [SHOP_STATUS.PENDING]: { color: 'orange', label: '待审核' },
+    [SHOP_STATUS.OPEN]: { color: 'green', label: '已开通' },
+    [SHOP_STATUS.REJECTED]: { color: 'red', label: '已驳回' },
+    [SHOP_STATUS.CLOSED]: { color: 'default', label: '已关闭' }
   }
   const item = map[status] ?? { color: 'default', label: '未知' }
   return <Tag color={item.color}>{item.label}</Tag>
@@ -33,6 +38,8 @@ export default function ShopManagePage() {
   const [acting, setActing] = useState<number | null>(null)
   const [rejectTarget, setRejectTarget] = useState<ShopAdminVO | null>(null)
   const [rejectRemark, setRejectRemark] = useState('')
+  const [closeTarget, setCloseTarget] = useState<ShopAdminVO | null>(null)
+  const [closeRemark, setCloseRemark] = useState('')
 
   const load = useCallback(() => {
     setLoading(true)
@@ -77,6 +84,22 @@ export default function ShopManagePage() {
       .finally(() => setActing(null))
   }
 
+  function handleClose() {
+    if (!closeTarget) {
+      return
+    }
+    setActing(closeTarget.id)
+    closeShop(closeTarget.id, { auditRemark: closeRemark })
+      .then(() => {
+        message.success(`已关闭「${closeTarget.shopName}」，该店商品已全站下架`)
+        setCloseTarget(null)
+        setCloseRemark('')
+        load()
+      })
+      .catch(() => {})
+      .finally(() => setActing(null))
+  }
+
   const columns = [
     { title: 'ID', dataIndex: 'id', width: 70 },
     { title: '店铺名称', dataIndex: 'shopName', width: 180 },
@@ -98,21 +121,31 @@ export default function ShopManagePage() {
     {
       title: '操作',
       width: 150,
-      render: (_: unknown, row: ShopAdminVO) =>
-        row.status === 0 ? (
-          <Space>
-            <Popconfirm title="通过该入驻申请？" description="通过后商家将获得商家身份" onConfirm={() => handleApprove(row)}>
-              <Button size="small" type="primary" loading={acting === row.id}>
-                通过
+      render: (_: unknown, row: ShopAdminVO) => {
+        if (row.status === SHOP_STATUS.PENDING) {
+          return (
+            <Space>
+              <Popconfirm title="通过该入驻申请？" description="通过后商家将获得商家身份" onConfirm={() => handleApprove(row)}>
+                <Button size="small" type="primary" loading={acting === row.id}>
+                  通过
+                </Button>
+              </Popconfirm>
+              <Button size="small" danger onClick={() => setRejectTarget(row)}>
+                驳回
               </Button>
-            </Popconfirm>
-            <Button size="small" danger onClick={() => setRejectTarget(row)}>
-              驳回
+            </Space>
+          )
+        }
+        if (row.status === SHOP_STATUS.OPEN) {
+          return (
+            <Button size="small" danger onClick={() => setCloseTarget(row)}>
+              关闭
             </Button>
-          </Space>
-        ) : (
-          '-'
-        )
+          )
+        }
+        // 已驳回 / 已关闭：没有可执行的动作（关闭是终局，Q2 拍板不做重开）
+        return '-'
+      }
     }
   ]
 
@@ -175,6 +208,33 @@ export default function ShopManagePage() {
           value={rejectRemark}
           maxLength={500}
           onChange={(e) => setRejectRemark(e.target.value)}
+        />
+      </Modal>
+
+      {/* 关闭是**不可撤销**的（Q2 拍板不做重开），所以这里比驳回多两层提示：
+          弹窗正文写明后果，且理由必填 —— 理由会写进 audit_remark，商家在商家中心看得到。 */}
+      <Modal
+        title={`关闭店铺：${closeTarget?.shopName ?? ''}`}
+        open={!!closeTarget}
+        onCancel={() => {
+          setCloseTarget(null)
+          setCloseRemark('')
+        }}
+        onOk={handleClose}
+        okText="确认关闭"
+        okButtonProps={{ danger: true, disabled: !closeRemark.trim(), loading: acting === closeTarget?.id }}
+        destroyOnClose
+      >
+        <p style={{ marginTop: 0 }}>
+          关闭后该店铺的商品将<b>全站不可见</b>（列表、首页推荐、详情、店铺页），且<b>不可撤销</b>——
+          商家也不能重新提交入驻申请。
+        </p>
+        <Input.TextArea
+          rows={3}
+          placeholder="关闭理由（必填，商家可查看）"
+          value={closeRemark}
+          maxLength={500}
+          onChange={(e) => setCloseRemark(e.target.value)}
         />
       </Modal>
     </div>
