@@ -28,7 +28,7 @@ function applyUser(set: (partial: Partial<UserState>) => void, user: UserInfo | 
   })
 }
 
-export const useUserStore = create<UserState>((set) => ({
+export const useUserStore = create<UserState>((set, get) => ({
   token: null,
   userInfo: null,
   isLoggedIn: false,
@@ -41,6 +41,32 @@ export const useUserStore = create<UserState>((set) => ({
     const saved = getUser()
     set({ token, isLoggedIn: !!token })
     applyUser(set, saved)
+
+    // REQ-20260913-既有缺陷修复 B2：`role` 是 JWT 签发时的快照，而 localStorage 里缓存的那份
+    // 永远不变 —— 商家被审核通过后，前台仍按旧角色渲染，**必须重新登录**才生效（刷新也没用）。
+    // 故同步恢复之后补拉一次 profile，以后端当前值为准。
+    //
+    // 必须保持本方法**同步返回**：`main.tsx` 在渲染前调它，靠它避免首帧守卫误判已登录用户。
+    // 所以是 fire-and-forget，不能 await。
+    if (token) {
+      get()
+        .fetchProfile()
+        .catch((err: { response?: { status?: number } }) => {
+          // 401：拦截器已清掉 localStorage 并跳登录页，但它够不到 store 状态
+          // （反向 import 会成环），不在这里对齐的话路由守卫仍认为已登录。
+          if (err?.response?.status === 401) {
+            set({
+              token: null,
+              userInfo: null,
+              isLoggedIn: false,
+              isAdmin: false,
+              isMerchant: false,
+              nickname: ''
+            })
+          }
+          // 其他失败（网络异常等）一律保持 localStorage 里的旧值，即降级到改动前的行为
+        })
+    }
   },
 
   async login(credentials) {

@@ -13,9 +13,11 @@ import org.springframework.http.InvalidMediaTypeException;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -48,6 +50,7 @@ public class GlobalExceptionHandler {
             case 401 -> HttpStatus.UNAUTHORIZED;
             case 403 -> HttpStatus.FORBIDDEN;
             case 404 -> HttpStatus.NOT_FOUND;
+            case 405 -> HttpStatus.METHOD_NOT_ALLOWED;
             case 409 -> HttpStatus.CONFLICT;
             case 429 -> HttpStatus.TOO_MANY_REQUESTS;
             case 502 -> HttpStatus.BAD_GATEWAY;       // 模型上游 HTTP/解析失败
@@ -93,6 +96,48 @@ public class GlobalExceptionHandler {
             return noBody(response, e);
         }
         return respond(e, HttpStatus.BAD_REQUEST, 400, e.getMessage(), request, response);
+    }
+
+    /**
+     * 未匹配到任何处理器 / 静态资源不存在 → <b>404</b>（REQ-20260913-既有缺陷修复 B3）。
+     *
+     * <p>此前这类框架异常被下面的 {@code handleException(Exception.class)} 兜底成 500：
+     * {@code ExceptionHandlerExceptionResolver} 的优先级高于 {@code DefaultHandlerExceptionResolver}，
+     * 而后者本该把它们分别处理成 404 / 405。</p>
+     *
+     * <p><b>消息用固定文案，不回显 {@code e.getMessage()}</b>：它形如
+     * {@code No static resource api/v1/user/me.}，回显等于告诉调用方哪些路径存在、用的什么框架。
+     * 注意这与 {@link #handleIllegalArgument} 回显消息的既有做法不同 —— 那条约束只针对本方法。</p>
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNoResourceFound(NoResourceFoundException e,
+                                                                   HttpServletRequest request,
+                                                                   HttpServletResponse response)
+            throws IOException {
+        if (isStreaming(response)) {
+            return noBody(response, e);
+        }
+        return respond(e, HttpStatus.NOT_FOUND,
+                ErrorCode.NOT_FOUND.getCode(), ErrorCode.NOT_FOUND.getMessage(), request, response);
+    }
+
+    /**
+     * 路径匹配上了、但 HTTP 方法不支持 → <b>405</b>（REQ-20260913-既有缺陷修复 B3）。
+     *
+     * <p>与 {@link #handleNoResourceFound} 同因同治。注意区别于 404：方法不对意味着
+     * "这个资源存在，只是不接受这个动词"。</p>
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException e,
+                                                                      HttpServletRequest request,
+                                                                      HttpServletResponse response)
+            throws IOException {
+        if (isStreaming(response)) {
+            return noBody(response, e);
+        }
+        return respond(e, HttpStatus.METHOD_NOT_ALLOWED,
+                ErrorCode.METHOD_NOT_ALLOWED.getCode(), ErrorCode.METHOD_NOT_ALLOWED.getMessage(),
+                request, response);
     }
 
     @ExceptionHandler(Exception.class)

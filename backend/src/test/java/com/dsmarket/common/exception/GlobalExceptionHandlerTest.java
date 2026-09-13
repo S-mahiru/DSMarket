@@ -4,17 +4,21 @@ import com.dsmarket.common.domain.ApiResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.validation.BeanPropertyBindingResult;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -151,5 +155,68 @@ class GlobalExceptionHandlerTest {
         assertNull(ret);
         assertEquals(500, resp.getStatus());
         assertTrue(resp.getContentAsString(StandardCharsets.UTF_8).contains("服务器内部错误"));
+    }
+
+    // ---- REQ-20260913-既有缺陷修复 B3：未匹配路径 → 404、方法不支持 → 405 ----
+
+    @Test
+    void missingPath_returns404WithOurEnvelope_not500() throws Exception {
+        // 改动前这两类框架异常被兜底的 handleException(Exception.class) 吞成 500，
+        // 因为 ExceptionHandlerExceptionResolver 的优先级高于 DefaultHandlerExceptionResolver。
+        ResponseEntity<ApiResponse<Void>> ret = handler.handleNoResourceFound(
+                new NoResourceFoundException(HttpMethod.GET, "api/v1/user/me"),
+                requestAccepting(MediaType.APPLICATION_JSON_VALUE), new MockHttpServletResponse());
+
+        assertNotNull(ret, "接受 JSON 的客户端走常规路径");
+        assertEquals(HttpStatus.NOT_FOUND, ret.getStatusCode(), "未匹配路径必须是 404，不是 500");
+        assertNotNull(ret.getBody());
+        assertEquals(404, ret.getBody().getCode());
+        assertEquals(ErrorCode.NOT_FOUND.getMessage(), ret.getBody().getMessage());
+    }
+
+    @Test
+    void missingPath_doesNotEchoFrameworkMessage() throws Exception {
+        // NoResourceFoundException 的消息形如 "No static resource api/v1/user/me." ——
+        // 回显它等于告诉调用方哪些路径存在、用的什么框架。
+        ResponseEntity<ApiResponse<Void>> ret = handler.handleNoResourceFound(
+                new NoResourceFoundException(HttpMethod.GET, "api/v1/user/me"),
+                requestAccepting(MediaType.APPLICATION_JSON_VALUE), new MockHttpServletResponse());
+
+        assertNotNull(ret.getBody());
+        String message = String.valueOf(ret.getBody().getMessage());
+        assertFalse(message.contains("No static resource"),
+                "不得回显框架原始消息，实际 message=" + message);
+        assertFalse(message.contains("api/v1/user/me"),
+                "更不得回显请求路径，实际 message=" + message);
+    }
+
+    @Test
+    void methodNotAllowed_returns405_not404andNot500() throws Exception {
+        // 405 与 404 必须分得开：方法不对 = "资源存在，只是不接受这个动词"
+        ResponseEntity<ApiResponse<Void>> ret = handler.handleMethodNotSupported(
+                new HttpRequestMethodNotSupportedException("DELETE"),
+                requestAccepting(MediaType.APPLICATION_JSON_VALUE), new MockHttpServletResponse());
+
+        assertNotNull(ret);
+        assertEquals(HttpStatus.METHOD_NOT_ALLOWED, ret.getStatusCode());
+        assertNotNull(ret.getBody());
+        assertEquals(405, ret.getBody().getCode(), "ErrorCode 里必须有 405，否则信封会说谎");
+        assertEquals(ErrorCode.METHOD_NOT_ALLOWED.getMessage(), ret.getBody().getMessage());
+    }
+
+    @Test
+    void missingPath_sseClient_stillGetsEnvelope_notBlankResponse() throws Exception {
+        // 与其他四个处理器同一条护栏：SSE 客户端 Accept 不接受 JSON 时，
+        // 绕开内容协商直接写信封，而不是让 Spring 兜底成"状态码对但没信封"。
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+
+        ResponseEntity<ApiResponse<Void>> ret = handler.handleNoResourceFound(
+                new NoResourceFoundException(HttpMethod.GET, "api/v1/user/me"),
+                requestAccepting(MediaType.TEXT_EVENT_STREAM_VALUE), resp);
+
+        assertNull(ret, "已直接写响应体，不能再交给消息转换器");
+        assertEquals(404, resp.getStatus());
+        assertTrue(resp.getContentAsString(StandardCharsets.UTF_8).contains(ErrorCode.NOT_FOUND.getMessage()),
+                "信封要读得到，实际 body=" + resp.getContentAsString(StandardCharsets.UTF_8));
     }
 }
