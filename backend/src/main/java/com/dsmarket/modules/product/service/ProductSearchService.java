@@ -52,4 +52,30 @@ public interface ProductSearchService {
      * @return 该店铺的商品分页结果
      */
     PageResult<ProductListVO> searchByShop(int page, int size, ProductQuery query, Long shopId);
+
+    /**
+     * 前台店铺页检索：**只返回 {@code shopId} 这一家店铺的在售商品**（REQ-20260913 §4.6）。
+     *
+     * <p>与 {@link #searchByShop} 的差别是**语义方向相反**，别互相复用：</p>
+     * <ul>
+     *   <li>{@code searchByShop} 是<b>商家侧</b>——不过滤状态（要看得见自家已下架商品），
+     *       且调用方已过 {@code requireActiveShopId}；</li>
+     *   <li>本方法是<b>商城侧</b>——只上架（{@code status=1}）<b>且</b>叠加公开可见判据。
+     *       用它去替商家侧，商家会发现自己的下架商品在后台列表里"消失"了，且不报错。</li>
+     * </ul>
+     *
+     * <p>{@code shopId} 仍须非 null（同 {@link #searchByShop} 的理由），但本方法不做店铺可见性校验
+     * —— 那一步由调用方（{@code PublicShopController}）先走 {@code ShopService.getPublicShop}，
+     * 好让"店铺不可见"返回 404 而不是一个空列表冒充"这家店没货"。</p>
+     */
+    PageResult<ProductListVO> searchPublicByShop(int page, int size, ProductQuery query, Long shopId);
+
+    /**
+     * 前台自营专区检索：只返回<b>平台自营</b>商品（{@code shop_id IS NULL}）且公开可见
+     * （REQ-20260913 §4.7）。
+     *
+     * <p>自营商品与任何店铺无关，故不受店铺可见性规则影响（E4）—— 判据里的
+     * {@code shop_id IS NULL} 分支恒真。</p>
+     */
+    PageResult<ProductListVO> searchSelfOperated(int page, int size, ProductQuery query);
 }

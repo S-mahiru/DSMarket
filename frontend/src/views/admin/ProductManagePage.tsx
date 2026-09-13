@@ -57,7 +57,7 @@ export default function ProductManagePage() {
       dataIndex: 'name',
       render: (_: unknown, row: ProductListVO) => (
         <Space>
-          <img src={row.mainImage || '/favicon.svg'} alt="" style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 4 }} />
+          <img src={row.mainImage || '/product-placeholder.svg'} alt="" style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 4 }} />
           {row.name}
         </Space>
       )

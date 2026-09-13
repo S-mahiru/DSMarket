@@ -43,6 +43,26 @@
   margin-top: 4px;
 }
 
+.detail-shop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 14px;
+
+  .shop-label {
+    color: #909399;
+  }
+
+  .shop-link {
+    color: #1677ff;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
+
 .detail-price-box {
   margin: 16px 0;
   padding: 12px 16px;

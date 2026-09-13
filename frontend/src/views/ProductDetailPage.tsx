@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Button, Empty, Image, InputNumber, Spin, Tag, message } from 'antd'
 import { getProductDetail } from '@/api/product'
 import { addToCart } from '@/api/cart'
@@ -128,6 +128,25 @@ export default function ProductDetailPage() {
       <div className="detail-info">
         <h1 className="detail-name">{detail.name}</h1>
         <div className="detail-subtitle">{detail.title}</div>
+
+        {/*
+          商家行（REQ-20260913 §4.5）。shopId 为空即平台自营 —— 走 /shop/self 自营专区，
+          让这条链路在还没有第三方商家数据时依然可点（§4.7）。
+          注意两个字段是**可选**的：全局 non_null 序列化下自营商品根本没有这两个键。
+        */}
+        <div className="detail-shop">
+          <span className="shop-label">商家</span>
+          {detail.shopId != null ? (
+            <Link to={`/shop/${detail.shopId}`} className="shop-link">
+              {detail.shopName || '查看店铺'}
+            </Link>
+          ) : (
+            <Link to="/shop/self" className="shop-link">
+              平台自营
+            </Link>
+          )}
+        </div>
+
         <div className="detail-price-box">
           <span className="detail-price">¥{(displayPrice ?? 0).toFixed(2)}</span>
           {detail.originalPrice != null && detail.originalPrice > (displayPrice ?? 0) && (

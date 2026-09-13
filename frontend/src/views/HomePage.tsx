@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Col, Empty, Row, Spin, Tag } from 'antd'
+import { Link, useNavigate } from 'react-router-dom'
+import { Col, Empty, Row, Spin } from 'antd'
 import { getCategories, getFeatured } from '@/api/product'
 import type { CategoryNode } from '@/types/api'
 import type { ProductListVO } from '@/types/product'
 import ProductCard from '@/components/business/ProductCard'
+import CategoryChips from '@/components/business/CategoryChips'
 import PageError from '@/components/business/PageError'
 import './HomePage.scss'
 
@@ -31,6 +32,14 @@ export default function HomePage() {
     load()
   }, [])
 
+  // 「全部」= 根节点计数之和，等于不带筛选的列表 total（REQ §10 第 3 条）。
+  // 任一环节 productCount 缺失就整体不传 —— E6 要求退化成「只显示名字」，
+  // 而不是显示一个错的「全部 0」。
+  const totalCount =
+    categories.length > 0 && categories.every((c) => c.productCount != null)
+      ? categories.reduce((sum, c) => sum + (c.productCount ?? 0), 0)
+      : undefined
+
   if (error) {
     return <PageError onRetry={load} />
   }
@@ -46,18 +55,17 @@ export default function HomePage() {
   return (
     <div className="home-page">
       <section className="home-section">
-        <h3 className="section-title">商品分类</h3>
-        <div className="category-nav">
-          {categories.map((c) => (
-            <Tag
-              key={c.id}
-              className="category-tag"
-              onClick={() => navigate(`/products?categoryId=${c.id}`)}
-            >
-              {c.name}
-            </Tag>
-          ))}
+        <div className="section-head">
+          <h3 className="section-title">商品分类</h3>
+          <Link to="/products" className="section-more">
+            查看全部 ›
+          </Link>
         </div>
+        <CategoryChips
+          categories={categories}
+          totalCount={totalCount}
+          onSelect={(id) => navigate(id == null ? '/products' : `/products?categoryId=${id}`)}
+        />
       </section>
 
       <section className="home-section">

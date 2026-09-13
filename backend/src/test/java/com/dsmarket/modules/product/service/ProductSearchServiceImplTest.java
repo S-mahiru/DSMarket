@@ -11,6 +11,7 @@ import com.dsmarket.modules.product.mapper.ProductMapper;
 import com.dsmarket.modules.product.service.impl.ProductSearchServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -123,6 +124,52 @@ class ProductSearchServiceImplTest {
         service.search(1, 10, query(null));
 
         verify(productMapper, times(1)).selectPage(any(Page.class), any(Wrapper.class));
+    }
+
+    @Test
+    void searchByShop_nullShopId_throwsBeforeQuerying() {
+        // shopId=null 一旦被静默当成"不筛"，本方法就退化成全平台检索：越权结果表现为
+        // "正常返回一页别家商品"，不报错、不留痕——最难发现的一类故障。所以必须抛，
+        // 且必须在**碰库之前**抛。
+        assertThrows(IllegalArgumentException.class,
+                () -> service.searchByShop(1, 10, query(null), null));
+        verify(productMapper, never()).selectPage(any(Page.class), any(Wrapper.class));
+    }
+
+    @Test
+    void searchByShop_shopFilterIsInWhereClause() {
+        // 白盒：把真正交给 MyBatis 的 WHERE 片段抠出来，确认 shop_id 在里面。
+        // （单测只能证明"条件被拼上了"，SQL 打出去后是否真的筛掉别家行，由
+        //  MerchantProductIsolationIntegrationTest 用真库验证。）
+        when(productMapper.selectPage(any(Page.class), any(Wrapper.class))).thenAnswer(inv -> {
+            Page<Product> page = inv.getArgument(0);
+            mockPage(page, List.of(), 0);
+            return (IPage<Product>) page;
+        });
+        ArgumentCaptor<Wrapper<Product>> captor = ArgumentCaptor.forClass(Wrapper.class);
+
+        service.searchByShop(1, 10, query(null), 10L);
+
+        verify(productMapper).selectPage(any(Page.class), captor.capture());
+        String sql = captor.getValue().getSqlSegment();
+        assertTrue(sql.contains("shop_id"),
+                "商家侧检索的 WHERE 必须出现 shop_id，实际=" + sql);
+    }
+
+    @Test
+    void searchByShop_keywordPath_keepsFilterOnBothFulltextAndFallback() {
+        // 关键词路径是两次独立的 selectPage（全文检索 → 零命中后 LIKE 兜底）。
+        // 这里断言两次都发生了，确保 shop 条件写在 doSearch 这一层——
+        // 若谁把它挪进某个分支，兜底那次就会漏掉隔离。
+        when(productMapper.selectPage(any(Page.class), any(Wrapper.class))).thenAnswer(inv -> {
+            Page<Product> page = inv.getArgument(0);
+            mockPage(page, List.of(), 0);
+            return (IPage<Product>) page;
+        });
+
+        service.searchByShop(1, 10, query("苹果"), 10L);
+
+        verify(productMapper, times(2)).selectPage(any(Page.class), any(Wrapper.class));
     }
 
     @Test
