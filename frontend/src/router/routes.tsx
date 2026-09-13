@@ -12,6 +12,7 @@ import RegisterPage from '@/views/RegisterPage'
 import ProfilePage from '@/views/ProfilePage'
 import ProductListPage from '@/views/ProductListPage'
 import ProductDetailPage from '@/views/ProductDetailPage'
+import ShopPage from '@/views/ShopPage'
 import CartPage from '@/views/CartPage'
 import AddressListPage from '@/views/AddressListPage'
 import OrderListPage from '@/views/OrderListPage'
@@ -30,6 +31,8 @@ import ShopManagePage from '@/views/admin/ShopManagePage'
 import AiSupportWorkbenchPage from '@/views/admin/AiSupportWorkbenchPage'
 import MerchantApplyPage from '@/views/MerchantApplyPage'
 import MerchantCenterPage from '@/views/MerchantCenterPage'
+import MerchantProductManagePage from '@/views/merchant/MerchantProductManagePage'
+import MerchantProductFormPage from '@/views/merchant/MerchantProductFormPage'
 
 const router = createBrowserRouter([
   {
@@ -68,6 +71,10 @@ const router = createBrowserRouter([
           { index: true, element: <HomePage />, handle: { title: '首页' } },
           { path: 'products', element: <ProductListPage />, handle: { title: '商品列表' } },
           { path: 'product/:id', element: <ProductDetailPage />, handle: { title: '商品详情' } },
+          // 店铺售卖页（REQ-20260913 §4.6）。**单一路由**，id 为字面量 self 时是自营专区 ——
+          // 不拆两条路由，免得纠结 /shop/self 与 /shop/:id 的优先级（§12.2 A8）。
+          // 与商品详情同样公开，不需要登录（§3 假设 1）。
+          { path: 'shop/:id', element: <ShopPage />, handle: { title: '店铺' } },
 
           // 需认证路由
           {
@@ -163,6 +170,36 @@ const router = createBrowserRouter([
               </RequireAuth>
             ),
             handle: { title: '商家中心' }
+          },
+          // 商家商品管理（REQ-20260912 §4.6）。三条都锁 role="MERCHANT"：
+          // 后端 `/api/v1/merchant/**` 是 hasRole("MERCHANT") 精确匹配（ADMIN 也进不来），
+          // 前端守卫与之对齐——否则 ADMIN 敲 URL 会看到一张必然报 403 的页面。
+          {
+            path: 'merchant/products',
+            element: (
+              <RequireAuth role="MERCHANT">
+                <MerchantProductManagePage />
+              </RequireAuth>
+            ),
+            handle: { title: '商品管理' }
+          },
+          {
+            path: 'merchant/products/create',
+            element: (
+              <RequireAuth role="MERCHANT">
+                <MerchantProductFormPage />
+              </RequireAuth>
+            ),
+            handle: { title: '新建商品' }
+          },
+          {
+            path: 'merchant/products/:id/edit',
+            element: (
+              <RequireAuth role="MERCHANT">
+                <MerchantProductFormPage />
+              </RequireAuth>
+            ),
+            handle: { title: '编辑商品' }
           }
         ]
       },
