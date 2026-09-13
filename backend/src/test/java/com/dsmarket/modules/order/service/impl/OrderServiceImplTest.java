@@ -3,6 +3,7 @@ package com.dsmarket.modules.order.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsmarket.common.enums.OrderStatusEnum;
 import com.dsmarket.common.exception.BusinessException;
+import com.dsmarket.common.exception.ErrorCode;
 import com.dsmarket.modules.address.entity.Address;
 import com.dsmarket.modules.address.mapper.AddressMapper;
 import com.dsmarket.modules.cart.entity.Cart;
@@ -17,6 +18,7 @@ import com.dsmarket.modules.order.util.OrderNoGenerator;
 import com.dsmarket.modules.product.entity.Product;
 import com.dsmarket.modules.product.mapper.ProductMapper;
 import com.dsmarket.modules.product.mapper.ProductSkuMapper;
+import com.dsmarket.modules.product.support.ProductPurchaseGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,6 +55,8 @@ class OrderServiceImplTest {
     private ProductSkuMapper productSkuMapper;
     @Mock
     private OrderNoGenerator orderNoGenerator;
+    @Mock
+    private ProductPurchaseGuard productPurchaseGuard;
 
     @InjectMocks
     private OrderServiceImpl service;
@@ -110,7 +114,7 @@ class OrderServiceImplTest {
         when(cartMapper.selectList(any())).thenReturn(List.of(cart(10L, null, 5)));
         when(addressMapper.selectById(100L)).thenReturn(address(1L));
         Product product = product(10L, "测试商品", "40.00", 2); // 库存 2 < 需求 5
-        when(productMapper.selectById(10L)).thenReturn(product);
+        when(productPurchaseGuard.requirePurchasable(10L)).thenReturn(product);
         CreateOrderRequest req = new CreateOrderRequest();
         req.setAddressId(100L);
         BusinessException ex = assertThrows(BusinessException.class, () -> service.create(1L, req));
@@ -122,7 +126,7 @@ class OrderServiceImplTest {
     void create_skuInvalid_throws() {
         when(cartMapper.selectList(any())).thenReturn(List.of(cart(10L, 20L, 1)));
         when(addressMapper.selectById(100L)).thenReturn(address(1L));
-        when(productMapper.selectById(10L)).thenReturn(product(10L, "SKU商品", "99.00", 99));
+        when(productPurchaseGuard.requirePurchasable(10L)).thenReturn(product(10L, "SKU商品", "99.00", 99));
         when(productSkuMapper.selectById(20L)).thenReturn(null); // SKU 已失效
         CreateOrderRequest req = new CreateOrderRequest();
         req.setAddressId(100L);
@@ -135,7 +139,7 @@ class OrderServiceImplTest {
         // 扣库存返回 0 → 抛异常（事务回滚由 @Transactional 处理，单测验证异常抛出）
         when(cartMapper.selectList(any())).thenReturn(List.of(cart(10L, null, 1)));
         when(addressMapper.selectById(100L)).thenReturn(address(1L));
-        when(productMapper.selectById(10L)).thenReturn(product(10L, "热销商品", "40.00", 10));
+        when(productPurchaseGuard.requirePurchasable(10L)).thenReturn(product(10L, "热销商品", "40.00", 10));
         when(orderNoGenerator.generate()).thenReturn("DSM2026081600000001");
         when(orderInfoMapper.insert(any(OrderInfo.class))).thenAnswer(inv -> {
             inv.getArgument(0, OrderInfo.class).setId(999L);
@@ -154,7 +158,7 @@ class OrderServiceImplTest {
     void create_success_freeShippingAndCleanCart() {
         when(cartMapper.selectList(any())).thenReturn(List.of(cart(10L, null, 2)));
         when(addressMapper.selectById(100L)).thenReturn(address(1L));
-        when(productMapper.selectById(10L)).thenReturn(product(10L, "测试商品", "40.00", 100));
+        when(productPurchaseGuard.requirePurchasable(10L)).thenReturn(product(10L, "测试商品", "40.00", 100));
         when(orderNoGenerator.generate()).thenReturn("DSM2026081600000001");
         when(orderInfoMapper.insert(any(OrderInfo.class))).thenAnswer(inv -> {
             inv.getArgument(0, OrderInfo.class).setId(999L);
@@ -188,7 +192,7 @@ class OrderServiceImplTest {
     void create_success_over99FreeShipping() {
         when(cartMapper.selectList(any())).thenReturn(List.of(cart(10L, null, 3))); // 3*40=120 ≥99
         when(addressMapper.selectById(100L)).thenReturn(address(1L));
-        when(productMapper.selectById(10L)).thenReturn(product(10L, "测试商品", "40.00", 100));
+        when(productPurchaseGuard.requirePurchasable(10L)).thenReturn(product(10L, "测试商品", "40.00", 100));
         when(orderNoGenerator.generate()).thenReturn("DSM2026081600000002");
         when(orderInfoMapper.insert(any(OrderInfo.class))).thenAnswer(inv -> {
             inv.getArgument(0, OrderInfo.class).setId(999L);
@@ -200,6 +204,45 @@ class OrderServiceImplTest {
         req.setAddressId(100L);
         OrderCreateResult result = service.create(1L, req);
         assertEquals(new BigDecimal("120.00"), result.getActualAmount()); // 免运费
+    }
+
+    @Test
+    void create_closedShopProduct_throwsAndWritesNothing() {
+        // Q6 真机实测的缺口：店铺关闭后，购物车里已有的商品仍能下单成功并落库 ¥188。
+        // 除断言异常外必须断言「订单没建、订单项没写、库存没扣、购物车没清」——
+        // 只断言抛异常会漏掉「异常抛出前已经写了一半」这种更坏的形态。
+        when(cartMapper.selectList(any())).thenReturn(List.of(cart(10L, null, 1)));
+        when(addressMapper.selectById(100L)).thenReturn(address(1L));
+        when(productPurchaseGuard.requirePurchasable(10L))
+                .thenThrow(new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "商品所属店铺已关闭: 商家商品"));
+
+        CreateOrderRequest req = new CreateOrderRequest();
+        req.setAddressId(100L);
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.create(1L, req));
+        assertEquals("商品所属店铺已关闭: 商家商品", ex.getMessage());
+
+        verify(orderInfoMapper, never()).insert(any(OrderInfo.class));
+        verify(orderItemMapper, never()).insert(any(OrderItem.class));
+        verify(productMapper, never()).deductStock(anyLong(), anyInt());
+        verify(cartMapper, never()).delete(any());
+    }
+
+    @Test
+    void create_oneLineUnpurchasable_failsWholeOrder() {
+        // 一单多商品时，任一行不可购买必须整单失败。
+        // 防的是「静默跳过坏行、把好的那几件买下来」—— 那会让用户以为整单都成了。
+        when(cartMapper.selectList(any())).thenReturn(List.of(cart(10L, null, 1), cart(11L, null, 1)));
+        when(addressMapper.selectById(100L)).thenReturn(address(1L));
+        when(productPurchaseGuard.requirePurchasable(10L)).thenReturn(product(10L, "好商品", "40.00", 10));
+        when(productPurchaseGuard.requirePurchasable(11L))
+                .thenThrow(new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "商品所属店铺已关闭: 坏商品"));
+
+        CreateOrderRequest req = new CreateOrderRequest();
+        req.setAddressId(100L);
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.create(1L, req));
+        assertEquals("商品所属店铺已关闭: 坏商品", ex.getMessage());
+
+        verify(orderInfoMapper, never()).insert(any(OrderInfo.class));
     }
 
     // ---------- 取消订单 ----------

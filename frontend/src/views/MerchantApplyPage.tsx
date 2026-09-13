@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Alert, Button, Card, Form, Input, Result, Tag, message } from 'antd'
 import { applyShop, getMyShop } from '@/api/shop'
 import PageError from '@/components/business/PageError'
+import { SHOP_STATUS } from '@/types/shop'
 import type { ApplyShopPayload, ShopVO } from '@/types/shop'
 
 export default function MerchantApplyPage() {
@@ -45,18 +46,48 @@ export default function MerchantApplyPage() {
     return <PageError onRetry={load} />
   }
 
-  // 已提交 / 已开通：展示状态（商家中心由 /merchant 提供）
-  if (shop && shop.status !== 2) {
+  // 已关闭：终局 —— **不给**重新申请入口（REQ-20260913-店铺关闭能力 Q2 拍板）。
+  //
+  // 这个分支必须排在最前面。此前这里写的是 `shop.status !== 2`，3 会掉进去、
+  // 被渲染成绿色的「已开通店铺」success 页 —— 即"店被关了，页面说你已开通"。
+  // 新增状态值时最容易漏的就是这类"用 != 兜底"的分支：它不报错，只是悄悄答错。
+  if (shop && shop.status === SHOP_STATUS.CLOSED) {
     return (
       <div style={{ maxWidth: 560, margin: '48px auto' }}>
         <Result
-          status={shop.status === 0 ? 'info' : 'success'}
-          title={shop.status === 0 ? '入驻申请审核中' : '已开通店铺'}
+          status="error"
+          title="店铺已被关闭"
+          subTitle="店铺已被平台关闭，不能重新申请入驻；店内商品在商城前台已全部不可见。"
+        >
+          <Card size="small">
+            <p>
+              店铺名称：<b>{shop.shopName}</b>
+            </p>
+            <p>
+              店铺状态：<Tag color="default">{shop.statusName}</Tag>
+            </p>
+            {shop.auditRemark && <p>关闭理由：{shop.auditRemark}</p>}
+            <p>申请时间：{shop.createdAt}</p>
+          </Card>
+        </Result>
+      </div>
+    )
+  }
+
+  // 待审核 / 已开通：展示状态（商家中心由 /merchant 提供）
+  if (shop && shop.status !== SHOP_STATUS.REJECTED) {
+    return (
+      <div style={{ maxWidth: 560, margin: '48px auto' }}>
+        <Result
+          status={shop.status === SHOP_STATUS.PENDING ? 'info' : 'success'}
+          title={shop.status === SHOP_STATUS.PENDING ? '入驻申请审核中' : '已开通店铺'}
           subTitle={
-            shop.status === 0 ? '管理员审核通过后，你将获得商家身份，可在个人中心进入商家中心。' : undefined
+            shop.status === SHOP_STATUS.PENDING
+              ? '管理员审核通过后，你将获得商家身份，可在个人中心进入商家中心。'
+              : undefined
           }
           extra={
-            shop.status === 1 ? (
+            shop.status === SHOP_STATUS.OPEN ? (
               <Button type="primary" onClick={() => navigate('/merchant')}>
                 进入商家中心
               </Button>
@@ -69,7 +100,7 @@ export default function MerchantApplyPage() {
             </p>
             <p>
               审核状态：
-              <Tag color={shop.status === 0 ? 'orange' : 'green'}>{shop.statusName}</Tag>
+              <Tag color={shop.status === SHOP_STATUS.PENDING ? 'orange' : 'green'}>{shop.statusName}</Tag>
             </p>
             <p>申请时间：{shop.createdAt}</p>
           </Card>

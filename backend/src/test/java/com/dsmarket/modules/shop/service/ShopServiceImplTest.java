@@ -2,10 +2,12 @@ package com.dsmarket.modules.shop.service;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.dsmarket.common.domain.PageResult;
+import com.dsmarket.common.enums.ShopStatusEnum;
 import com.dsmarket.common.enums.UserRoleEnum;
 import com.dsmarket.common.exception.BusinessException;
 import com.dsmarket.modules.shop.dto.ApplyShopRequest;
 import com.dsmarket.modules.shop.dto.AuditShopRequest;
+import com.dsmarket.modules.shop.dto.CloseShopRequest;
 import com.dsmarket.modules.shop.dto.ShopAdminRow;
 import com.dsmarket.modules.shop.dto.ShopVO;
 import com.dsmarket.modules.shop.entity.Shop;
@@ -195,5 +197,128 @@ class ShopServiceImplTest {
         req.setStatus(9);
         BusinessException ex = assertThrows(BusinessException.class, () -> service.adminAudit(10L, req));
         assertEquals(400, ex.getCode());
+    }
+
+    // ---------- 管理端关闭店铺（REQ-20260913-店铺关闭能力 §10 第 1、2 条）----------
+
+    @Test
+    void closeShop_openShop_setsClosedStatusAndRemark() {
+        when(shopMapper.selectById(10L)).thenReturn(shop(10L, 1L, 1, "审核时的备注"));
+
+        CloseShopRequest req = new CloseShopRequest();
+        req.setAuditRemark("违规经营");
+        service.closeShop(10L, req);
+
+        ArgumentCaptor<Shop> captor = ArgumentCaptor.forClass(Shop.class);
+        verify(shopMapper).updateById(captor.capture());
+        assertEquals(ShopStatusEnum.CLOSED.getValue(), captor.getValue().getStatus());
+        assertEquals("违规经营", captor.getValue().getAuditRemark());
+    }
+
+    /**
+     * Q3 拍板：关闭**不降** role。
+     *
+     * <p>这条断言的价值在于它**能失败** —— 若有人"顺手"在 closeShop 里补一句
+     * {@code user.setRole(USER)}，它会立刻转红。（同 `adminAudit_reject_setsStatusAndRemark`
+     * 里那条 `never().updateById` 的写法。）</p>
+     */
+    @Test
+    void closeShop_doesNotTouchUserRole() {
+        when(shopMapper.selectById(10L)).thenReturn(shop(10L, 1L, 1, null));
+
+        service.closeShop(10L, new CloseShopRequest());
+
+        verify(userMapper, never()).updateById(any(User.class));
+        verify(userMapper, never()).selectById(any());
+    }
+
+    /** 请求体整个省略（`@RequestBody(required=false)`）也要能关，且理由置空而非留旧值。 */
+    @Test
+    void closeShop_nullBody_stillClosesAndClearsRemark() {
+        when(shopMapper.selectById(10L)).thenReturn(shop(10L, 1L, 1, "审核时的备注"));
+
+        service.closeShop(10L, null);
+
+        ArgumentCaptor<Shop> captor = ArgumentCaptor.forClass(Shop.class);
+        verify(shopMapper).updateById(captor.capture());
+        assertEquals(ShopStatusEnum.CLOSED.getValue(), captor.getValue().getStatus());
+        assertNull(captor.getValue().getAuditRemark(), "缺省理由必须清空，不能把上一条审核备注留成「关闭理由」");
+    }
+
+    @Test
+    void closeShop_notFound_throws404() {
+        when(shopMapper.selectById(10L)).thenReturn(null);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.closeShop(10L, new CloseShopRequest()));
+        assertEquals(404, ex.getCode());
+        verify(shopMapper, never()).updateById(any(Shop.class));
+    }
+
+    /** Q4 拍板：重复关闭 = 409，不是幂等 200。 */
+    @Test
+    void closeShop_alreadyClosed_throws409AndSaysClosed() {
+        when(shopMapper.selectById(10L)).thenReturn(shop(10L, 1L, 3, "上次关闭理由"));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.closeShop(10L, new CloseShopRequest()));
+        assertEquals(409, ex.getCode());
+        assertEquals("该店铺已关闭", ex.getMessage());
+        verify(shopMapper, never()).updateById(any(Shop.class));
+    }
+
+    /** §9 E3：关闭一个还在待审核的店铺 → 409，那是「驳回」的语义，该走审核端点。 */
+    @Test
+    void closeShop_pendingShop_throws409() {
+        when(shopMapper.selectById(10L)).thenReturn(shop(10L, 1L, 0, null));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.closeShop(10L, new CloseShopRequest()));
+        assertEquals(409, ex.getCode());
+        assertEquals("只有已开通的店铺才能关闭", ex.getMessage());
+    }
+
+    @Test
+    void closeShop_rejectedShop_throws409() {
+        when(shopMapper.selectById(10L)).thenReturn(shop(10L, 1L, 2, "资料不全"));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.closeShop(10L, new CloseShopRequest()));
+        assertEquals(409, ex.getCode());
+    }
+
+    // ---------- 关闭后的重申请（§9 E8、§10 第 7 条）----------
+
+    /**
+     * Q2 拍板：关闭即终局 —— 被关闭的商家重新提交入驻申请必须被拒，**且不改动 `dsm_shop` 任何列**。
+     *
+     * <p>这条是"方案甲"的核心防线：若 `apply` 的放行条件被改回"看 2 或 3"，关闭就会被
+     * 一次重新申请撤销（覆盖店名并重置为待审核）—— 那正是本需求要根治的坑。</p>
+     */
+    @Test
+    void apply_afterClosed_throwsConflictAndWritesNothing() {
+        when(userMapper.selectById(1L)).thenReturn(user(1L, UserRoleEnum.MERCHANT.getValue()));
+        when(shopMapper.selectOne(any(Wrapper.class))).thenReturn(shop(10L, 1L, 3, "违规经营"));
+
+        ApplyShopRequest req = new ApplyShopRequest();
+        req.setShopName("换个名字再来");
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.apply(1L, req));
+        assertEquals(409, ex.getCode());
+        assertEquals("店铺已被关闭，不能重新申请入驻", ex.getMessage());
+        verify(shopMapper, never()).insert(any(Shop.class));
+        verify(shopMapper, never()).updateById(any(Shop.class));
+    }
+
+    // ---------- 状态名（§4.2 方案甲的核心：2 与 3 必须分开）----------
+
+    @Test
+    void statusName_separatesRejectedFromClosed() {
+        assertEquals("已驳回", ShopVO.statusName(2), "2 只是「申请被驳回」，不该再带「关闭」字样");
+        assertEquals("已关闭", ShopVO.statusName(3));
+        assertEquals("待审核", ShopVO.statusName(0));
+        assertEquals("已开通", ShopVO.statusName(1));
+        assertEquals("未知", ShopVO.statusName(null));
+        assertEquals("未知", ShopVO.statusName(99));
     }
 }
