@@ -98,12 +98,12 @@ CREATE TABLE dsm_product (
 CREATE INDEX idx_category_id ON dsm_product (category_id);
 CREATE INDEX idx_product_status ON dsm_product (status);
 CREATE INDEX idx_is_featured ON dsm_product (is_featured);
--- 全文搜索索引（PostgreSQL GIN + tsvector，中文分词 zhparser_config，配置见 V5__zhparser_fulltext.sql）
--- 注意：需要 zhparser 扩展 + zhparser_config 分词配置已存在（V5 脚本负责创建，保持幂等）
-CREATE INDEX ft_search ON dsm_product USING GIN (
-    to_tsvector('zhparser_config',
-        coalesce(name, '') || ' ' || coalesce(title, '') || ' ' || coalesce(brief, ''))
-);
+-- 全文搜索索引 ft_search 【不在这里建】—— 见 V05__zhparser_fulltext.sql
+-- 原因（2026-09-14 实测确认）：该索引用 to_tsvector('zhparser_config', ...)，
+-- 而 zhparser_config 分词配置要到 V05 才创建。本文件是第一个执行的脚本，
+-- 放在这里会形成 V1 ←→ V5 的【循环依赖】（V5 建同名索引又需要本文件建的 dsm_product），
+-- 任何执行顺序都无法满足 —— 表现为全新初始化直接失败（容器退出码 3）。
+-- ft_search 由 V05 独占创建；V05 内是 DROP INDEX IF EXISTS + 重建，对已有库同样幂等。
 COMMENT ON TABLE dsm_product IS '商品表';
 COMMENT ON COLUMN dsm_product.id IS '商品ID';
 COMMENT ON COLUMN dsm_product.name IS '商品名称';

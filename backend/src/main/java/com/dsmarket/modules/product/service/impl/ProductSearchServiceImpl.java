@@ -30,7 +30,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ProductSearchServiceImpl implements ProductSearchService {
 
-    /** zhparser 中文分词配置名（V5__zhparser_fulltext.sql 创建） */
+    /** zhparser 中文分词配置名（V05__zhparser_fulltext.sql 创建） */
     private static final String CONFIG = "zhparser_config";
     /** 参与全文检索的商品列（与 ft_search 索引表达式保持一致） */
     private static final String TSVECTOR = "to_tsvector('" + CONFIG + "', "
