@@ -2,14 +2,19 @@
 # DSMarket 生产环境配置
 # 启动：SPRING_PROFILES_ACTIVE=prod java -jar dsmarket-backend-1.0.0.jar
 # 本机模拟生产默认连 localhost 的 dsmarket_prod 库；上云时用环境变量覆盖。
-# 注意：生产环境务必通过环境变量设置强密码 DB_PASSWORD，勿使用默认值。
+# 【必填】DB_PASSWORD 与 JWT_SECRET 都没有默认值，未注入即启动失败（见文件内注释）。
+# deploy/start-prod.sh 与 .bat 会在起进程前先校验这两个变量并给出提示。
 # ============================================
 spring:
   datasource:
     # 独立生产库 dsmarket_prod（与 dev 的 dsmarket 隔离）
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dsmarket_prod}
     username: ${DB_USERNAME:postgres}
-    password: ${DB_PASSWORD:postgres}
+    # 【安全】同 jwt.secret：生产口令必须由环境变量注入，此处【故意不写默认值】。
+    # 原先默认 `postgres` —— 照脚本启动即用这个库口令，等于没有口令。
+    # 不写默认值 ⇒ 未注入时 Spring 以 "Could not resolve placeholder 'DB_PASSWORD'"
+    # 直接启动失败（fail-fast），而不是带着一个公开已知的口令上线。
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 20
@@ -19,6 +24,11 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      # 【安全】同 jwt.secret / DB_PASSWORD：生产 Redis 口令必须由环境变量注入，
+      # 此处【故意不写默认值】。原先整段没有 password —— 生产 Redis 处于无认证状态，
+      # 而它存着 JWT 黑名单（决定"已登出的 token 还算不算数"）、AI 会话原文与限流计数。
+      # 未注入时启动即失败（fail-fast）。口令生成：openssl rand -base64 32
+      password: ${REDIS_PASSWORD}
       timeout: 3s
   # 生产关闭 SQL stdout 日志（经 MyBatis 参数 SQL 已由 log-impl 接管）
   jackson:
@@ -27,6 +37,26 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+
+# 【安全】生产关闭 API 文档（审计 12-readiness-audit §1.6）。
+# springdoc 的依赖与 SecurityConfig 里 /api-docs/**、/swagger-ui/** 的 permitAll 都是全局的，
+# 只在 dev 生效不够 —— 生产开着等于让匿名访问者枚举全部接口，含 /api/v1/admin/**、
+# /api/v1/merchant/** 的完整入参结构，省掉攻击者一半的探测成本。
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+jwt:
+  # 【安全】生产密钥必须由环境变量注入 —— 此处【故意不写默认值】。
+  # 背景：application.yml 里的 dev 兜底值已随公开仓库泄露，是已知值。若这里再给默认值，
+  # 生产启动会静默回落到它 ⇒ 任何知道该值的人都能伪造任意用户（含 admin）的 token。
+  # 不写默认值 ⇒ 未注入时 Spring 以 "Could not resolve placeholder 'JWT_SECRET'"
+  # 直接启动失败（fail-fast），而不是带病上线。
+  # 生成：openssl rand -base64 48
+  secret: ${JWT_SECRET}
+  # 有效期与其它 jwt.* 配置继承 application.yml（86400），此处不重复，避免两处维护。
 
 mybatis-plus:
   configuration:

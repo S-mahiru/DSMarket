@@ -1,8 +1,26 @@
 # DSMarket 开发环境依赖：PostgreSQL 16 + Redis 7
 # 用法：
-#   启动：  docker compose up -d
-#   停止：  docker compose down
-#   清数据：docker compose down -v   （删除数据卷，重新初始化 V1/V2 脚本）
+#   启动：    docker compose up -d
+#   停止：    docker compose stop      （保留容器与数据卷，可 start 回来）
+#
+# ⚠ 不要用 `docker compose down -v` 去「重置数据库」。
+#   它删掉的是 pgdata 卷，而该卷里不止 dsmarket —— 还有 dsmarket_test 与 dsmarket_prod。
+#   down -v 之后 up 只会自动重新初始化 dsmarket 一个（它是 POSTGRES_DB）。
+#   另外两个要靠脚本手工重建，没有任何东西会自动调用它们：
+#     dsmarket_test → deploy/init_test_db.sh
+#     dsmarket_prod → deploy/init_db.sh（其 DB_NAME 默认值就是它）
+#   要验证全新初始化，请另起一个一次性容器挂载 db/ 目录来看，别动这个卷。
+#
+# ⚠ 若本机装了原生 Redis（Windows 服务 `Redis`，自启），它会和应用抢 6379，且**不报错**：
+#   两个进程靠 Windows 的 SO_REUSEADDR 同时绑住端口，host 连接恒定落到原生那个 ——
+#   应用连的根本不是下面这个容器。（实测：往容器写 dsm_probe，host 上 redis-cli GET 读不到，
+#   重复 5 次一致；host 侧 DBSIZE=28、CONFIG GET config_file 指向 C:\Program Files\Redis\...）
+#   后果是 `docker exec dsmarket-redis redis-cli ...` 清的是**空实例**，真数据一个没动 ——
+#   本项目已经在这上面栽过一次。
+#   现在端口只发布到回环，两者**无法共存**（SO_REUSEADDR 也救不了），所以这个冲突会以
+#   `ports are not available` 的形态**响亮暴露**，而不是静默读写另一个实例。
+#   处置（需管理员）：Stop-Service Redis -Force; Set-Service Redis -StartupType Disabled
+#   本机 2026-09-20 已停用（StartType=Disabled），容器接管。
 
 services:
   postgres:
@@ -15,8 +33,11 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       TZ: Asia/Shanghai
+    # 只发布到本机回环（审计 12-readiness-audit §1.3）。
+    # 写 "5432:5432" 等于绑 0.0.0.0 —— 在咖啡厅/宿舍网里，同网段任何人可直连库。
+    # 开发依赖没有任何理由对局域网开放；要跨机访问请显式改地址，别用默认。
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       # 首次初始化时自动执行 V1 建表 + V2 种子数据（按文件名顺序）
       - ./backend/src/main/resources/db:/docker-entrypoint-initdb.d:ro
@@ -30,13 +51,20 @@ services:
   redis:
     image: redis:7-alpine
     container_name: dsmarket-redis
-    command: redis-server --appendonly yes
+    # 【安全】无口令的 Redis 里存着 JWT 黑名单、AI 会话原文与限流计数，可被直接读写。
+    # 口令与后端 spring.data.redis.password 读的是**同名**变量 REDIS_PASSWORD，
+    # 但**别把这名字当保证**：这里由 compose 客户端展开 ${VAR:-x}，后端由它自己的进程环境
+    # 展开 ${VAR:x} —— 两处独立展开，只给一边设就会错配。
+    # 默认值 dsm_dev_redis 只服务于本地开发；生产由环境变量覆盖。
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-dsm_dev_redis}
+    # 同 postgres：只发布到回环
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # --no-auth-warning 只是别让口令出现在每次探活的 stderr 里
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD:-dsm_dev_redis}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 12
