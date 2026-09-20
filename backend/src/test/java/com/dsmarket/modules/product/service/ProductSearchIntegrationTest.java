@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 
@@ -19,9 +20,14 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * 商品全文检索集成测试（真实 PostgreSQL，独立 dsmarket_test 库）：
  * 验证 zhparser 中文分词检索真实命中、多词 AND、空结果 LIKE 兜底、状态过滤。
+ *
+ * <p>本类的多条断言是「恰好命中 N 条」，因此必须由测试自己掌握<b>全部</b>夹具 ——
+ * 见 {@link #cleanSlate()}。{@code @Transactional} 是它的前提：清表随测试回滚，
+ * 库里数据不会真的少掉。
  */
 @SpringBootTest
 @ActiveProfiles("test")
+@Transactional
 class ProductSearchIntegrationTest {
 
     @Autowired
@@ -31,10 +37,23 @@ class ProductSearchIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    /**
+     * 清空商品表，让每个用例只看见自己插入的夹具。
+     *
+     * <p>为什么要清<b>整表</b>而不是只删自己的 {@code ITEST-%}：
+     * V3 种子商品 iPhone 16 的 {@code brief = '最新款苹果手机，性能怪兽'} 同时命中
+     * 本类三个关键词（{@code 苹果} / {@code 手机} / 子串 {@code 果手}），
+     * 一条数据就能把三条「恰好 1 条」的断言全部打成 2 条。
+     * 全新初始化的库上必红（既有库上只因演示商品早被删掉才侥幸是绿的）。
+     *
+     * <p>原写法只删 {@code name LIKE 'ITEST-%'}，还有第二个坑：订单模块的测试
+     * 也在用 {@code ITEST-} 前缀（如 {@code ITEST-并发防超卖}），会被本类误删。
+     *
+     * <p>删除与插入都在测试事务内，跑完自动回滚 —— 对库本身零副作用。
+     */
     @BeforeEach
     void cleanSlate() {
-        jdbc.update("DELETE FROM dsm_product_sku WHERE product_id IN (SELECT id FROM dsm_product WHERE name LIKE 'ITEST-%')");
-        jdbc.update("DELETE FROM dsm_product WHERE name LIKE 'ITEST-%'");
+        jdbc.update("DELETE FROM dsm_product");
     }
 
     private Long insertProduct(String name, String brief, Integer status) {
