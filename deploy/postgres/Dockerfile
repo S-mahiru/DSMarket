@@ -11,6 +11,13 @@
 #     `CREATE EXTENSION vector` 就 SIGILL —— 2026-09-20 CI 实测 `signal 4: Illegal instruction`。
 #     本机实测：zhparser.so / libscws.so 均为 0 条 AVX 指令，**只有 vector.so 中招**。
 #   - 源码从 codeload.github.com 取 tarball（github.com 主域在部分网络被阻断，codeload CDN 可达；勿改回 git clone）；
+#   - ★ 三个依赖的来源与字节**全部固定**（勿退回"跟分支走"或明文 HTTP）：
+#     scws 走 HTTPS（原为明文 http，486KB 的 tarball 中间任何一跳都能替换）、
+#     zhparser 钉到 commit（原为 `refs/heads/master` —— 移动引用，上游推一次
+#     **本仓库零提交、镜像内容却会变**）、三份都校验 sha256（见 SOURCES.md）。
+#     这与上面 pgvector 那条是**同一类缺陷的两个面**：那条是"按构建**机**出码"，
+#     这条是"按构建**时刻**出码"。**CI 结构上抓不到两者** —— 它只验"能构建、能跑、
+#     ISA 是基线"，证明不了拉到的字节是不是官方那份。
 #   - 扩展现有数据卷不生效：升级后需对目标库手动 CREATE EXTENSION（V6 已含 vector），再 docker compose up -d postgres 重建容器（勿 -v，保留卷）。
 FROM postgres:16-alpine
 
@@ -23,30 +30,45 @@ FROM postgres:16-alpine
 #   显式 `sh` 让构建不依赖权限位；本机 Windows 与 CI Linux 两条路径因此一致。
 COPY check-isa.sh /usr/local/bin/check-isa.sh
 
+# 三份源码 tarball 的 sha256（为什么固定 / 怎么更新，见 SOURCES.md）。
+# 下载后、**编译前**校验一次。放在构建期而不是 CI 里"构建后检查"，
+# 理由同 ISA 守卫：让本机 docker build 也受保护。
+# ★ sources.sha256 里**不能写注释** —— busybox 的 sha256sum -c 不跳过 `#` 行，
+#   会把注释逐行当成校验条目。实测踩过，详见 SOURCES.md。
+COPY sources.sha256 /tmp/sources.sha256
+
+# zhparser 钉住的 commit。**这个值在构建命令里出现两次**（URL 与解压后的目录名），
+# 所以抽成 ARG —— 改了 URL 忘了改 `cd` 会构建红（目录不存在），但让它不可能发生更好。
+# 解压目录名由 codeload 按 ref 生成：钉 sha 时是 `zhparser-<完整sha>`，跟分支时才叫 `zhparser-master`。
+# ★ 改这里必须同步改 sources.sha256 里的 zhparser 行，否则校验红。
+ARG ZHPARSER_PIN=2e995c4df672563992b4d7a147b8fa2d0d4cda6c
+
 # 编译依赖（构建完清理，避免体积膨胀）
 # binutils 只服务于 ISA 守卫的 objdump，与其它构建依赖一起被 purge 掉。
 RUN apk add --no-cache build-base postgresql-dev wget binutils \
+    && cd /tmp \
+    && wget -q https://www.xunsearch.com/scws/down/scws-1.2.3.tar.bz2 -O scws.tar.bz2 \
+    && wget -q https://codeload.github.com/amutu/zhparser/tar.gz/${ZHPARSER_PIN} -O zhparser.tar.gz \
+    && wget -q https://codeload.github.com/pgvector/pgvector/tar.gz/refs/tags/v0.8.0 -O pgvector.tar.gz \
+    && sha256sum -c sources.sha256 \
     && mkdir -p /tmp/scws && cd /tmp/scws \
-    && wget -q http://www.xunsearch.com/scws/down/scws-1.2.3.tar.bz2 -O scws.tar.bz2 \
-    && tar xjf scws.tar.bz2 \
+    && tar xjf /tmp/scws.tar.bz2 \
     && cd scws-1.2.3 \
     && ./configure --prefix=/usr/local \
     && make \
     && make install \
     && cd /tmp \
-    && wget -q https://codeload.github.com/amutu/zhparser/tar.gz/refs/heads/master -O zhparser.tar.gz \
     && tar xzf zhparser.tar.gz \
-    && cd zhparser-master \
+    && cd zhparser-${ZHPARSER_PIN} \
     && make SCWS_HOME=/usr/local with_llvm=no \
     && make install SCWS_HOME=/usr/local with_llvm=no \
     && cd /tmp \
-    && wget -q https://codeload.github.com/pgvector/pgvector/tar.gz/refs/tags/v0.8.0 -O pgvector.tar.gz \
     && tar xzf pgvector.tar.gz \
     && cd pgvector-0.8.0 \
     && make OPTFLAGS="" with_llvm=no \
     && make install OPTFLAGS="" with_llvm=no \
     && cd / \
-    && rm -rf /tmp/scws /tmp/zhparser.tar.gz /tmp/zhparser-master /tmp/pgvector.tar.gz /tmp/pgvector-0.8.0 \
+    && rm -rf /tmp/scws /tmp/scws.tar.bz2 /tmp/zhparser.tar.gz /tmp/zhparser-${ZHPARSER_PIN} /tmp/pgvector.tar.gz /tmp/pgvector-0.8.0 /tmp/sources.sha256 \
     && sh /usr/local/bin/check-isa.sh \
     && apk del --purge build-base wget postgresql-dev binutils \
     && rm -rf /var/cache/apk/* \
