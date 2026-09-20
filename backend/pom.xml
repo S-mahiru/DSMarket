@@ -16,6 +16,13 @@
     <version>1.0.0</version>
     <name>DSMarket Backend</name>
     <description>黑海商城后端服务</description>
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
 
     <properties>
         <java.version>21</java.version>
