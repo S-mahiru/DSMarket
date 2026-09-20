@@ -19,17 +19,55 @@
 #     报错跟真实原因对不上。
 #
 # PG 镜像从 GHCR 预构建拉取，理由见 .github/workflows/postgres-image.yml。
+#
+# ============================================
+# ★ 镜像是「可变 tag」产的，本文件用两道闸门对付它（2026-09-20 加，别删）：
+#
+#   背景：CI 拉的 `:16-zhparser` 是**可变 tag**，由**另一个 workflow** 在**同一次 push**
+#   上生产。两个 job 并行起跑 ⇒ CI 永远抢在推之前拉，**测的是上一个镜像**。
+#   实测：`4c2632a` 那次 CI 拉到的 digest `sha256:29f3990e…` ≠ 镜像 job 推送的
+#   `sha256:642a6fbacf4d…`，且 CI 拉取时刻比 manifest 推送**早 64 秒**。
+#   后果有两层：① 改 `deploy/postgres/**` 的提交，Dockerfile 的改动**不可能**被 CI
+#   在同一次 push 里验到；② 更险的是**假绿方向** —— CI 绿不蕴含"当前 Dockerfile 没问题"。
+#
+#   甲（下方「校验 PG 镜像产物是 x86-64 基线」那一步）：**拉到镜像后先验产物**，
+#       非基线就指名道姓地报错，而不是等几十秒后在 compose 层收到一句莫名的
+#       `container dsmarket-postgres exited (2)`。
+#       注意：**甲单独做是不够的** —— 它只是把"静默测旧镜像"变成"响亮地测旧镜像"。
+#   乙（`workflow_run` 触发）：**等镜像 workflow 推完再跑 CI**，让同一次 push 里的
+#       Dockerfile 改动真的被验到（见下方 on.workflow_run 与 push.paths-ignore）。
+#
+#   ⇒ 两者是配套的：乙保证"拉到的是新镜像"，甲保证"拉到的镜像确实是基线"。
 # ============================================
 name: CI
 
 on:
   push:
     branches: [main]
+    # ★ 改到镜像相关文件的提交，**故意不走 push 触发**：那条路测的是**上一个**镜像
+    #   （就是上面说的竞态）。它们改由下面的 `workflow_run` 在镜像推完之后跑。
+    #   用 paths-ignore 而不是"两条都跑"：两条都跑会得到一个必然无意义的红，
+    #   而"红得莫名其妙"会训练人去点重跑 —— 那正是掩盖假绿方向的习惯。
+    paths-ignore:
+      - 'deploy/postgres/**'
+      - '.github/workflows/postgres-image.yml'
   pull_request:
+  # ★ 乙：镜像 workflow 跑完后触发本 workflow。
+  #   两个必须知道的语义：
+  #   ① `workflow_run` 用的是**默认分支上**的本文件 —— 所以本改动推送后即生效，
+  #      但同一个 push 里若还有一个并发中的镜像 workflow，它**不保证**会触发。
+  #   ② 它**不改变** `GITHUB_SHA`：workflow_run 事件下 `GITHUB_SHA` 是**默认分支的最后一个
+  #      提交**，不是触发它的那个提交 ⇒ checkout 必须显式给 ref（见下方 steps）。
+  workflow_run:
+    workflows: ["发布 PG 镜像"]
+    types: [completed]
+    branches: [main]
 
-# 同一分支的旧 run 被新 run 取代时取消旧的，省额度
+# 同一分支的旧 run 被新 run 取代时取消旧的，省额度。
+# ★ group 里必须带 event_name：workflow_run 事件下 github.ref 也是 refs/heads/main，
+#   不带的话 push 触发的那次与 workflow_run 触发的那次会**互相取消**。
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -42,8 +80,21 @@ jobs:
     permissions:
       contents: read
       packages: read
+    # ★ workflow_run 在镜像 workflow **结束时**触发，**失败的也触发**。
+    #   镜像没推上去时 tag 仍指着旧镜像 —— 那时跑 CI 只会把旧产物再验一遍，
+    #   还会把"镜像构建失败"这个**已经报过**的错再报一次、且指向错误的位置
+    #   （屏幕上又是一句 `exited (2)`）。所以只在镜像成功时继续。
+    #   前端 job 不加这个门 —— 它不依赖镜像，镜像挂了也该拿到前端反馈。
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # ★ 见 on.workflow_run 的说明②：不写这行，workflow_run 触发时会 checkout
+          #   **默认分支的最新提交**，而不是触发它的那个提交。若期间又有人推了一笔，
+          #   这次 CI 验的代码就不是它声称要验的那份 —— "跑的是哪份代码"重新变得不可归因。
+          #   push / pull_request 事件下 `github.event.workflow_run` 为空 ⇒ 求值为空串
+          #   ⇒ 与不写 ref 等价，退回默认行为。
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: 计算镜像名（必须全小写）
         run: |
@@ -76,6 +127,43 @@ jobs:
             echo "::warning title=GHCR 上没有预构建镜像::回退到本地构建（慢，且依赖第三方源码下载）。请先跑 workflow「发布 PG 镜像」。"
             docker build -t "${IMG}" deploy/postgres
           fi
+          # ★ 把**这次消费的产物 digest** 打进日志。
+          #   没有它，"CI 绿"分不出"验了新镜像"和"又测了一遍旧镜像" —— 那正是
+          #   可变 tag 竞态能藏身的原因（实测：首跑 digest `29f3990e…` ≠ 推送的
+          #   `642a6fbacf4d…`，重跑才对上）。凡"拉远程可变产物再验证"的流程都该这么做。
+          echo "==> 本次使用的 PG 镜像 digest:"
+          docker image inspect "${IMG}" --format '{{index .RepoDigests 0}}' || docker image inspect "${IMG}" --format '{{.Id}}'
+
+      # ★ 甲：拉到镜像后**先验产物**，别把它当成"反正能起来"。
+      #   为什么必须放在这里（而不是只靠 Dockerfile 里那道构建期守卫）：
+      #   构建期守卫保护的是"**构建**这次提交的 Dockerfile"，而 CI 消费的是 GHCR 上
+      #   那个**可变 tag** —— 两者在竞态下可以不是同一份产物（实测差 64 秒）。
+      #   这一步断言的是「**我马上要用的这份产物**是基线」。
+      - name: 校验 PG 镜像产物是 x86-64 基线（ISA 守卫）
+        run: |
+          set -euo pipefail
+          IMG="dsmarket-postgres:16-zhparser"
+          SO=/tmp/ci-vector.so
+
+          # ★ 守卫必须在 **runner 主机**上跑，不能 `docker run` 进镜像里跑：
+          #   Dockerfile 末尾 `apk del ... binutils` 把 objdump 清掉了（镜像不该为
+          #   一次检查背 30MB 依赖），进容器跑只会得到 "objdump: not found"。
+          #   用 docker create + cp 把 .so 抠出来即可 —— 反汇编只看字节，与它
+          #   编译时面向哪个 libc 无关。
+          if ! command -v objdump >/dev/null 2>&1; then
+            echo "::error title=runner 上没有 objdump::ISA 守卫无法运行。**这不是镜像的问题**，是 CI 环境变了 —— 装 binutils 即可（ubuntu runner 本应自带）。"
+            exit 1
+          fi
+
+          cid=$(docker create "${IMG}")
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          docker cp "${cid}:/usr/local/lib/postgresql/vector.so" "${SO}"
+          docker rm -f "$cid" >/dev/null
+          trap - EXIT
+
+          # 用**仓库里这一份**守卫脚本，不用镜像里烤进去的那份：
+          # 验的是"当前提交的判据"，而旧镜像里根本可能没有这个文件。
+          sh deploy/postgres/check-isa.sh "${SO}"
 
       - name: 起 PostgreSQL + Redis
         # --wait-timeout 180 是显式上界：healthcheck 是 5s × 12 retries = 60s，
