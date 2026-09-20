@@ -14,6 +14,23 @@
 #
 # 跑完之后，ci.yml 里那句 docker pull 才有东西可拉。
 # 第一次必须先跑本 workflow，否则 ci.yml 会走"GHCR 上没有 → 本地现编"的兜底分支。
+#
+# ============================================
+# ★ 本 workflow 是 ci.yml 的**上游**，改动它要连着 ci.yml 一起想（2026-09-20 加）：
+#
+#   `:16-zhparser` 是**可变 tag**。原先两个 workflow 由同一次 push **并行**起跑，
+#   CI 永远抢在推之前拉 ⇒ **测的是上一个镜像**（实测：CI 拉到 `sha256:29f3990e…`，
+#   而本 workflow 推的是 `sha256:642a6fbacf4d…`，两者相差 64 秒）。
+#
+#   现在 ci.yml 对 `deploy/postgres/**` 与**本文件**都设了 `paths-ignore` ——
+#   改这两处的提交不再走 push 触发，而是由 ci.yml 的 `workflow_run` 在**本 workflow
+#   推完之后**才跑，从而测到的确实是这一次的产物。
+#
+#   ⇒ 因此有两条约束，改本文件时必须一起满足：
+#     ① **本 workflow 的 `name:` 是 ci.yml 里 `workflow_run.workflows` 的匹配键**
+#        （现在两边都是「发布 PG 镜像」）。**改名字不改另一边 = CI 从此再也不跑**
+#        （而且不会有任何报错，只是安静地不触发）。
+#     ② 必须继续在 **main** 上跑 —— ci.yml 的 workflow_run 带 `branches: [main]` 过滤。
 # ============================================
 name: 发布 PG 镜像
 
