@@ -1,0 +1,69 @@
+# ============================================
+# 发布 PostgreSQL 镜像到 GHCR（预构建）
+#
+# 为什么需要这个 workflow：
+#   deploy/postgres/Dockerfile 要从源码编 scws + zhparser + pgvector（约 450MB），
+#   其中 scws 走的是**第三方明文 HTTP** 下载（Dockerfile:14，审计 §6-15）。
+#   如果让 CI 每次现场编，等于把「CI 能不能绿」绑在别人那台 web 服务器上 ——
+#   它慢一点或挂一会儿，CI 就红，而红的理由和代码毫无关系。
+#   所以这里编一次、推一次，CI 只 pull。源码编译与第三方下载**整体移出 CI 关键路径**。
+#
+# 触发：
+#   - push 改到 deploy/postgres/** 时自动重建（镜像内容变了才重建）
+#   - 也可在 Actions 页手动 workflow_dispatch 跑一次
+#
+# 跑完之后，ci.yml 里那句 docker pull 才有东西可拉。
+# 第一次必须先跑本 workflow，否则 ci.yml 会走"GHCR 上没有 → 本地现编"的兜底分支。
+# ============================================
+name: 发布 PG 镜像
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/postgres/**'
+      - '.github/workflows/postgres-image.yml'
+
+permissions:
+  contents: read
+  # 推包到 GHCR 需要 write；这是本 workflow 存在的唯一理由
+  packages: write
+
+jobs:
+  publish:
+    name: 构建并推送 dsmarket-postgres:16-zhparser
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 计算镜像名（必须全小写）
+        run: |
+          # ★ GHCR 的镜像路径**必须全小写**，而本仓库 owner 是 S-mahiru（含大写 S）。
+          #   直接拼 ${{ github.repository_owner }} 会被 registry 拒：
+          #   "invalid reference format: repository name must be lowercase"。
+          #   ${VAR,,} 是 bash 的小写展开，用它而不是硬编码，这样 fork 也能跑。
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/dsmarket-postgres" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: deploy/postgres
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:16-zhparser
+            ${{ env.IMAGE }}:sha-${{ github.sha }}
+          # 缓存放在 Actions cache 里。本镜像只在 Dockerfile 变更时重建，
+          # 缓存的主要价值是改动后重编 scws/zhparser 时省掉无变化的那几层。
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,130 @@
+# ============================================
+# DSMarket CI：后端集成测试 + 前端构建/单测
+#
+# 拓扑说明（这是本文件最关键的一段，别改错）：
+#   deploy/init_test_db.sh 与 init_db.sh 走的是 **`docker exec dsmarket-postgres`**
+#   （容器名来自 docker-compose.yml 的 container_name）。所以在 CI 里必须用
+#   **docker compose 起服务**，而不是 GitHub Actions 的 `services:` ——
+#   `services:` 起的容器名叫 `<job>_<service>_<hash>`，那两个脚本一个都跑不通。
+#   反过来，用 compose 就意味着「容器名」这件事不用改脚本，直接可用。
+#
+#   compose 文件不需要改：compose 客户端读单个步骤的 env 时，maven 进程读的是
+#   同一个步骤环境 —— 与本地「两处独立展开」的陷阱不同，这里设一次两边都一致。
+#   实测默认值本来就对齐（compose 的 ${REDIS_PASSWORD:-dsm_dev_redis} 与
+#   application-test.yml 的同名默认值），故**不设** REDIS_PASSWORD 也是对的。
+#
+#   ★ `docker compose up -d` **不会**等 healthcheck；必须加 `--wait`。
+#     init_db.sh:27 第一件事就是 docker exec ... psql，中间没有任何等待就绪的循环 ——
+#     省掉 --wait 的表现是脚本走进"库不存在 → CREATE DATABASE"那条支路然后失败，
+#     报错跟真实原因对不上。
+#
+# PG 镜像从 GHCR 预构建拉取，理由见 .github/workflows/postgres-image.yml。
+# ============================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同一分支的旧 run 被新 run 取代时取消旧的，省额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: 后端（Spring Boot 集成测试）
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 计算镜像名（必须全小写）
+        run: |
+          # 同 postgres-image.yml：GHCR 路径必须全小写，而 owner 是 S-mahiru。
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/dsmarket-postgres" >> "$GITHUB_ENV"
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 放在最前面：GHCR 不可达属于基础设施故障，应当快速失败，
+      # 而不是等 Maven 下载完依赖才炸。
+      - name: 取 PG 镜像
+        run: |
+          set -euo pipefail
+          IMG="dsmarket-postgres:16-zhparser"
+          if docker pull "${IMAGE}:16-zhparser"; then
+            # compose 在 image tag **已存在本地**时既不 pull 也不 build。
+            # （实测：摘掉 tag 后 dry-run 会先尝试 pull 再 fallback 到 build；
+            #   打上 tag 后 dry-run 只剩 "Container ... Running"。）
+            docker tag "${IMAGE}:16-zhparser" "${IMG}"
+            echo "==> 使用 GHCR 预构建镜像"
+          else
+            # 兜底**故意留**，但要响亮：冷启动（首次 CI、GHCR 包被删）时不至于直接红。
+            # 走这条路会重新引入 Dockerfile:14 那个第三方明文 HTTP 依赖 ——
+            # 所以它必须是 warning 而不是静默成功。
+            echo "::warning title=GHCR 上没有预构建镜像::回退到本地构建（慢，且依赖第三方源码下载）。请先跑 workflow「发布 PG 镜像」。"
+            docker build -t "${IMG}" deploy/postgres
+          fi
+
+      - name: 起 PostgreSQL + Redis
+        # --wait-timeout 180 是显式上界：healthcheck 是 5s × 12 retries = 60s，
+        # 留出 pull redis 的余量。不给上界的话卡住会一直等到 job 超时。
+        run: docker compose up -d --wait --wait-timeout 180
+
+      - name: 建集成测试库
+        # 这一句就是 README 第 99 行交代的那一步：dsmarket_test 不在 compose 的
+        # POSTGRES_DB 里，官方 entrypoint 不会建它。脚本自带自检（表数 ≥ 1 才退出 0）。
+        run: bash deploy/init_test_db.sh
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          # 同 setup-node：显式写死，别让它去别处找 pom.xml 然后静默不缓存
+          cache-dependency-path: backend/pom.xml
+
+      - name: 后端测试
+        working-directory: backend
+        # 不需要 rm -rf target/classes（那是对付本机编辑器 ECJ 写坏类的坑，
+        # 见 dev_docks 的构建隐患记录）—— runner 上 target/ 每次都是全新的。
+        run: mvn -B test
+
+      - name: 失败时导出行车日志
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+
+  frontend:
+    name: 前端（构建 + 单测）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # 24 是与本机开发环境一致的版本（node -v = v24.15.0），不是随手挑的 LTS
+          node-version: '24'
+          cache: npm
+          # 不写这行 setup-node 会在仓库根找 package-lock.json，找不到就静默不缓存
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      # 前端没有 lint，构建（tsc -b && vite build）是它唯一的静态检查
+      - run: npm run build
+
+      - run: npm test
