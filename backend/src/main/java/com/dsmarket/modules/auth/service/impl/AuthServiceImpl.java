@@ -3,6 +3,7 @@ package com.dsmarket.modules.auth.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsmarket.common.constant.RedisKeyConstant;
 import com.dsmarket.common.enums.UserRoleEnum;
+import com.dsmarket.common.enums.UserStatusEnum;
 import com.dsmarket.common.exception.BusinessException;
 import com.dsmarket.common.exception.ErrorCode;
 import com.dsmarket.modules.auth.dto.LoginRequest;
@@ -69,7 +70,9 @@ public class AuthServiceImpl implements AuthService {
         if (user == null || !passwordEncoder.matches(request.getPassword(), user.getPassword())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "用户名或密码错误");
         }
-        if (user.getStatus() != 1) {
+        // 与 JwtAuthenticationFilter 共用同一判据：禁用既要拦住"新登录"，也要让"手里的旧 token"失效。
+        // 这里只做前半段，后半段在过滤器里（审计 12-readiness-audit §1.1）。
+        if (!UserStatusEnum.ENABLED.is(user.getStatus())) {
             throw new BusinessException(ErrorCode.FORBIDDEN.getCode(), "账号已被禁用");
         }
 
