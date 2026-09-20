@@ -8,6 +8,17 @@ spring:
     redis:
       host: localhost
       port: 6379
+      # 【安全】口令与 docker-compose.yml 的 redis 读的是**同名**变量 REDIS_PASSWORD。
+      # ⚠ 但"同名"【不等于】"必然一致"：compose 那侧由客户端进程展开 ${VAR:-x}，
+      #   本进程这侧由自己的环境展开 ${VAR:x} —— 是**两处独立展开**，
+      #   只给一边设 REDIS_PASSWORD 就会错配。别把这个名字当保证，改了任一侧都要实测。
+      # 默认值只服务于本地开发；
+      # 生产走 application-prod.yml，那里【故意没有默认值】，未注入即启动失败。
+      #
+      # ⚠ 配错口令【不会】让应用启动失败：JwtAuthenticationFilter 查 Redis 黑名单时
+      #   异常被空 catch 吞掉，表现是进程正常起来、日志无痕、所有已登录请求静默 401。
+      #   所以验证判据是"登录后带 token 请求成功"，不是"启动没报错"。
+      password: ${REDIS_PASSWORD:dsm_dev_redis}
 
 mybatis-plus:
   configuration:

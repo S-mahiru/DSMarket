@@ -9,6 +9,10 @@ spring:
     redis:
       host: localhost
       port: 6379
+      # 【安全】同 application-dev.yml：与 docker-compose.yml 读的是同名变量 REDIS_PASSWORD，
+      # 但那是**两处独立展开**（同名 ≠ 必然一致），只给一边设就会错配。
+      # 容器现在带 requirepass，缺了这行集成测试里所有碰 Redis 的用例都会失败。
+      password: ${REDIS_PASSWORD:dsm_dev_redis}
 
 mybatis-plus:
   configuration:
