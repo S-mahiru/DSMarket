@@ -60,7 +60,23 @@ sha256sum: WARNING: 41 of 44 computed checksums did NOT match
 
 （这次的失败是**响亮**的，属于运气好；同样的"承重假设没验"换个形状就会变成静默失效。）
 
-### 2. 哈希钉的是 **(URL, ref) 组合的字节**，不是"源码内容"
+### 2. `sources.sha256` 必须钉 LF（`.gitattributes` 里有规则，别删）
+
+同一个机制换个消费方：`sha256sum -c` 按**字节**解析文件名，行尾多一个 `\r` 就成了
+`scws.tar.bz2\r`，报错是 `can't open 'scws.tar.bz2'` —— **那个 `\r` 在终端里看不见**，
+现象长得像"文件不存在"，与真因完全对不上。
+
+实测（真基镜像内，两份只差行尾）：LF → 三行全 `OK` exit 0；CRLF → 三条全 `FAILED` exit 1。
+
+**★ 这条特别值得记：CI 在 Linux 上永远看不到这个失败**（`core.autocrlf` 默认非 true，
+检出仍是 LF）⇒ **"CI 绿"与"Windows 全新 clone 构建红"可以同时成立**，
+正是本项目反复吃亏的"只在干净 clone 上才现形"那一类。
+故 `.gitattributes` 里那条 `sources.sha256 text eol=lf` **是承重的，别当装饰删掉**。
+
+（顺带实测过、**确认不需要**的：Dockerfile 带 CRLF 照样构建成功 ——
+BuildKit 容忍 CRLF，`\` 续行没被 `\r` 打断，故没给它加规则。）
+
+### 3. 哈希钉的是 **(URL, ref) 组合的字节**，不是"源码内容"
 
 实测：`refs/heads/master` 与钉住的 sha 是同一个 commit、源码逐字节一致，
 但两份 tarball 的 **sha256 不同**（`0ab8b596…` vs `ce5d5e21…`）——
