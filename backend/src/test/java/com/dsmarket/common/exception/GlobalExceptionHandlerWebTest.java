@@ -1,11 +1,18 @@
 package com.dsmarket.common.exception;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
@@ -35,10 +42,43 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+// 把静态资源根指向一次性目录。**不能沿用默认的 ./uploads** —— 那是开发机上放真实上传文件的
+// 地方，git 不携带它，测试依赖它就会在别处必红（见 createFixture）。
+@TestPropertySource(properties = "web.upload.dir=" + GlobalExceptionHandlerWebTest.UPLOAD_DIR)
 class GlobalExceptionHandlerWebTest {
+
+    /**
+     * 本类专用的静态资源夹具目录。
+     *
+     * <p>放 {@code target/} 下有两个好处：它已被 .gitignore（不会被误提交），
+     * 且 {@code mvn clean} 即清空 —— 故本类不需要写清理逻辑，每次 {@code @BeforeEach} 重建即可。
+     */
+    static final String UPLOAD_DIR = "target/test-uploads";
+
+    /** 夹具文件名。刻意不叫 iphone16.jpg —— 它只是几个字节，与任何真实商品图无关。 */
+    private static final String FIXTURE = "fixture.jpg";
 
     @Autowired
     private MockMvc mockMvc;
+
+    /**
+     * 造出本类需要的那个静态资源文件。
+     *
+     * <p><b>为什么必须自己造</b>：本类原先请求 {@code /uploads/iphone16.jpg}，并在 Javadoc 里
+     * 断言「该文件确实存在（V3 种子的商品图）」。那个断言在开发机上碰巧成立，但
+     * {@code backend/uploads/} 是 <b>.gitignore</b> 的 —— 该文件<b>只存在于恰好往里放过图的机器上</b>。
+     * CI 全新 clone 上没有它，于是这条用例必然 404 失败（2026-09-20 由 CI 首跑实测曝出，
+     * 本地用一个空目录复现了逐字相同的失败）。</p>
+     *
+     * <p>这与 {@code ProductSearchIntegrationTest} 那条「测试依赖 V3 种子数据」是<b>同一类缺陷</b>：
+     * 测试的绿依赖于 git 不携带的本地状态。修法也同理 —— <b>让测试自己掌握全部夹具</b>。</p>
+     */
+    @BeforeEach
+    void createFixture() throws IOException {
+        Path dir = Path.of(UPLOAD_DIR);
+        Files.createDirectories(dir);
+        Files.write(dir.resolve(FIXTURE), "fixture".getBytes(StandardCharsets.UTF_8));
+    }
 
     /**
      * 正向对照：这条必须 200。
@@ -84,12 +124,13 @@ class GlobalExceptionHandlerWebTest {
      * 故 §9 E11 把它标为"本切片最容易踩的坑"。这里必须证明新增的 404 处理器<b>只影响缺失的资源</b> ——
      * 若它连存在的文件也拦下，商品图会全站变叉。</p>
      *
-     * <p>取 {@code iphone16.jpg}：{@code web.upload.dir} 默认 {@code ./uploads}，Maven 测试的工作目录是
-     * {@code backend/}，该文件确实存在（V3 种子的商品图）。</p>
+     * <p><b>夹具由本类自己造</b>：{@link #createFixture()} 写在一次性目录 {@value #UPLOAD_DIR}
+     * （{@code web.upload.dir} 已由本类的 {@code @TestPropertySource} 指过去），
+     * 不再引用 {@code ./uploads} 下的真实图片 —— 原写法在 CI 上必红，原因见该方法。</p>
      */
     @Test
     void existingStaticResource_isStillServed_notHijackedByThe404Handler() throws Exception {
-        mockMvc.perform(get("/uploads/iphone16.jpg"))
+        mockMvc.perform(get("/uploads/" + FIXTURE))
                 .andExpect(status().isOk());
     }
 
