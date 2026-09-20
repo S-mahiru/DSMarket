@@ -6,7 +6,22 @@
 # （README「测试」一节就是这么写的）—— CRLF 的 shell 脚本会被解释成 `bash^M`，
 # 报错信息与真实原因完全对不上。CI 在 Linux 上跑同一个脚本，同样依赖 LF。
 #
-# 只钉 *.sh：这是唯一一条**有确凿失败模式**的规则。
+# 钉的规则都要求**有确凿失败模式**，不是"看起来该钉"。
 # 刻意不写 *.bat —— 仓库里的 .bat 目前是 LF、索引里也是 LF，给它强加 eol=crlf
 # 会让下一次检出就变样，那是没验证过的改动，不顺手做。
+#
+# 【2026-09-20 补第二条】sources.sha256 —— 同一个机制，换个消费方：
+# 它被 `sha256sum -c` 按**字节**解析文件名，行尾多一个 \r 就成了
+# `scws.tar.bz2\r`，报错是 `can't open 'scws.tar.bz2'` ——
+# **那个 \r 在终端里看不见**，现象长得像"文件不存在"，与真因完全对不上。
+# 实测（真基镜像 postgres:16-alpine 内）：LF 版 exit 0、CRLF 版三条全 FAILED exit 1。
+#
+# ★ 为什么这条特别值得记：**CI 在 Linux 上，永远看不到这个失败**
+#   （Linux 的 core.autocrlf 默认非 true，检出仍是 LF）——
+#   于是"CI 绿"与"Windows 全新 clone 构建红"可以同时成立，
+#   正是本项目反复吃亏的"只在干净 clone 上才现形"那一类。
+#
+# 顺带实测过、**不需要**加的：Dockerfile 带 CRLF 照样构建成功
+# （BuildKit 容忍 CRLF，`\` 续行没被 \r 打断），故不给它加规则。
 *.sh text eol=lf
+sources.sha256 text eol=lf
