@@ -1,0 +1,12 @@
+# 行尾固定 —— 不要依赖 core.autocrlf。
+#
+# 为什么需要这个文件：本机 core.autocrlf=true 且此前**没有 .gitattributes**。
+# autocrlf 只影响"检出时写成什么"，于是在 Windows 上全新 clone 会把 *.sh 写成 CRLF，
+# 而 PowerShell/cmd 之外的用法是 Git Bash 里的 `bash deploy/init_test_db.sh`
+# （README「测试」一节就是这么写的）—— CRLF 的 shell 脚本会被解释成 `bash^M`，
+# 报错信息与真实原因完全对不上。CI 在 Linux 上跑同一个脚本，同样依赖 LF。
+#
+# 只钉 *.sh：这是唯一一条**有确凿失败模式**的规则。
+# 刻意不写 *.bat —— 仓库里的 .bat 目前是 LF、索引里也是 LF，给它强加 eol=crlf
+# 会让下一次检出就变样，那是没验证过的改动，不顺手做。
+*.sh text eol=lf
