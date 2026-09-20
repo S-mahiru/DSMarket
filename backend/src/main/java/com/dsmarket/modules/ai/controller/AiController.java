@@ -2,44 +2,44 @@ package com.dsmarket.modules.ai.controller;
 
 import com.dsmarket.common.domain.ApiResponse;
 import com.dsmarket.common.util.SecurityUtils;
-import com.dsmarket.modules.ai.config.AiProperties;
 import com.dsmarket.modules.ai.dto.ChatRequest;
 import com.dsmarket.modules.ai.dto.FeedbackRequest;
-import com.dsmarket.modules.ai.provider.ChatModel;
 import com.dsmarket.modules.ai.service.AiChatStreamService;
 import com.dsmarket.modules.ai.service.AiIssueService;
 import com.dsmarket.modules.ai.session.UnresolvedSignalCounter;
 import com.dsmarket.modules.ai.sse.SseChatStream;
 import com.dsmarket.modules.ai.support.SupportEvalTracer;
-import com.dsmarket.modules.ai.tool.ToolRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 
 /**
  * AI 智能客服入口。提供：
  * <ul>
- *   <li>{@code GET /meta} —— 装配自检（M0）；</li>
  *   <li>{@code POST /chat} —— SSE 正式通道（REQ C1，事件协议见 modules/ai/sse/ChatStream）；</li>
  *   <li>{@code POST /feedback} —— 买家点赞/点踩（C3-F2，点踩入问题池）。</li>
  * </ul>
  *
- * <p>原先挂在本类上的三个 {@code /dev/*} 调试端点已迁至 {@link AiDevController}
- * （该类带 {@code @Profile("dev")}，生产不装配）。URL 未变。</p>
+ * <p><b>本类只保留生产路径。</b>原先挂在这里的装配自检 {@code GET /meta}（M0）与三个
+ * {@code /dev/*} 调试端点，现已<b>全部</b>迁至 {@link AiDevController}（该类带
+ * {@code @Profile("dev")}，生产不装配）。三个 {@code /dev/*} 的 URL 未变；{@code /meta}
+ * 顺带归入 dev 命名空间，现为 {@code GET /api/v1/ai/dev/meta} —— 迁移前全仓 grep
+ * 确认**零消费方**（前端、后端、测试均无引用）。</p>
+ *
+ * <p>{@code /meta} 必须一并挡住的理由同那三个端点：它只需登录即可调，且回传
+ * {@code llm.apiKeyMasked} / {@code embedding.apiKeyMasked}（审计 12-readiness-audit §1.5）。
+ * 它是那批 M0 自检口里最后一个漏网的 —— 上一批只搬了 {@code /dev/*} 三个。</p>
  */
 @Slf4j
 @RestController
@@ -47,9 +47,6 @@ import java.util.concurrent.RejectedExecutionException;
 @RequiredArgsConstructor
 public class AiController {
 
-    private final AiProperties properties;
-    private final ChatModel chatModel;
-    private final ToolRegistry toolRegistry;
     private final AiChatStreamService streamService;
     private final AiIssueService issueService;
     /** C4 §4.6 F6 触发③：点踩是一条买家可见性为零的"未解决"信号，在此累加计数 */
@@ -59,35 +56,6 @@ public class AiController {
     private final ObjectMapper objectMapper;
     @Qualifier("aiChatExecutor")
     private final Executor aiChatExecutor;
-
-    /** M0 冒烟：回当前装配态（key 只回掩码，不回明文） */
-    @GetMapping("/meta")
-    public ApiResponse<Map<String, Object>> meta() {
-        String key = properties.getLlm().getApiKey();
-        AiProperties.Embedding emb = properties.getEmbedding();
-
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("module", "ai");
-        data.put("status", "C1 SSE /chat");
-        data.put("llm.baseUrl", properties.getLlm().getBaseUrl());
-        data.put("llm.model", chatModel.modelName());
-        data.put("llm.apiKeyConfigured", key != null && !key.isBlank());
-        data.put("llm.apiKeyMasked", mask(key));
-        data.put("embedding.vendor", emb.getVendor());
-        data.put("embedding.model", emb.getModel());
-        data.put("embedding.dimension", emb.getDimension());
-        data.put("embedding.baseUrl", emb.getBaseUrl());
-        data.put("embedding.apiKeyConfigured", emb.getApiKey() != null && !emb.getApiKey().isBlank());
-        data.put("embedding.apiKeyMasked", mask(emb.getApiKey()));
-        data.put("session.ttl", properties.getSession().getTtl().toMinutes() + "min");
-        data.put("session.maxRounds", properties.getSession().getMaxRounds());
-        data.put("chat.maxToolRounds", properties.getChat().getMaxToolRounds());
-        data.put("chat.rateLimit", properties.getChat().getRateLimit() + "/min");
-        data.put("chat.dedupTtl", properties.getChat().getDedupTtl().toSeconds() + "s");
-        data.put("chat.sseTimeout", properties.getChat().getSseTimeout().toMinutes() + "min");
-        data.put("tools", toolRegistry.specs().stream().map(s -> s.getName()).toList());
-        return ApiResponse.success(data);
-    }
 
     /**
      * SSE 正式通道（REQ C1，AI 态）。请求契约与事件协议见 REQ-20260907 §2/§3。
@@ -158,12 +126,5 @@ public class AiController {
         // 迟早只改一边。collected 是本切片新增的可观测量（见 SupportEvalTracer#feedback）。
         evalTracer.feedback(userId, request.getReplyId(), satisfied, request.getReason(), collected);
         return ApiResponse.success();
-    }
-
-    private String mask(String key) {
-        if (key == null || key.length() < 8) {
-            return "***";
-        }
-        return key.substring(0, 3) + "…" + key.substring(key.length() - 4);
     }
 }
