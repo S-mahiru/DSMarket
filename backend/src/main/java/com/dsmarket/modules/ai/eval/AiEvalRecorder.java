@@ -2,7 +2,6 @@ package com.dsmarket.modules.ai.eval;
 
 import com.dsmarket.modules.ai.config.AiProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -24,7 +23,6 @@ import java.util.Map;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class AiEvalRecorder {
 
     /**
@@ -51,6 +49,37 @@ public class AiEvalRecorder {
 
     private final AiProperties properties;
     private final AiEvalSink sink;
+
+    /**
+     * 启动时把留痕的<b>真实状态</b>播报进日志（审计 §2.8②）。
+     *
+     * <p><b>为什么这条不能省</b>：留痕的总开关默认就是 {@code true}，生产也<b>不</b>另设
+     * "默认关闭"（见 {@code application-prod.yml} 的说明），于是"到底在不在记、用的是不是
+     * 那个已公开的盐"完全由<b>分片配置</b>决定 —— {@code application.yml} 给默认、
+     * 各 profile 再覆盖，光读任何一份都推不出结论。本项目反复踩的正是这类坑：
+     * 配置改了、行为静默跟着变、没人发现。故照 {@code ClientIpResolver} 的先例，
+     * 把承重的假设写进启动日志，让它可以被审计，而不是留在 yml 注释里等人回来读。</p>
+     *
+     * <p><b>播报状态、不播报值</b>：盐本身<b>绝不</b>进日志，只报它<b>算不算机密</b>，
+     * 判据复用 {@link AiProperties.Eval#hasPrivateSalt()} —— 与
+     * {@code AiEvalSaltGuard} 同一个谓词。两处若各判各的，就会出现"播报说机密、
+     * 实际是公开值"的谎话。</p>
+     *
+     * <p><b>这不是假想的</b>：2026-09-21 本类第一次真机跑出来印的就是
+     * {@code salt=已配置}，而当时环境变量根本没设 —— 因为
+     * {@code @ConfigurationProperties} 绑定把未解析的占位符原样绑了进来，
+     * 旧判据只比对"是不是内置占位盐"这一种公开值，认不出它。
+     * 详见 {@link AiProperties.Eval#hasPrivateSalt()} 与 {@code AiEvalSaltGuard}。</p>
+     */
+    public AiEvalRecorder(AiProperties properties, AiEvalSink sink) {
+        this.properties = properties;
+        this.sink = sink;
+        AiProperties.Eval eval = properties.getEval();
+        log.info("[ai][c5] 留痕 enabled={} dir={} salt={}", eval.isEnabled(), eval.getDir(),
+                eval.hasPrivateSalt()
+                        ? "机密（来自配置）"
+                        : "非机密（内置占位盐，或占位符没解析成功）—— userIdHash 可被枚举反查");
+    }
 
     /**
      * 留痕专用序列化器，<b>刻意不复用 Spring 容器里的 ObjectMapper</b>。

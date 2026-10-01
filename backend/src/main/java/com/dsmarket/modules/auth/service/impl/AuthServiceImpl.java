@@ -9,6 +9,7 @@ import com.dsmarket.common.exception.ErrorCode;
 import com.dsmarket.modules.auth.dto.LoginRequest;
 import com.dsmarket.modules.auth.dto.LoginResponse;
 import com.dsmarket.modules.auth.dto.RegisterRequest;
+import com.dsmarket.modules.auth.limit.AuthRateLimiter;
 import com.dsmarket.modules.auth.service.AuthService;
 import com.dsmarket.modules.user.dto.UserVO;
 import com.dsmarket.modules.user.entity.User;
@@ -32,10 +33,12 @@ public class AuthServiceImpl implements AuthService {
     private final BCryptPasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final AuthRateLimiter authRateLimiter;
 
     @Override
     @Transactional
-    public void register(RegisterRequest request) {
+    public void register(RegisterRequest request, String clientIp) {
+        authRateLimiter.checkRegister(clientIp);
         Long count = userMapper.selectCount(
                 new LambdaQueryWrapper<User>().eq(User::getUsername, request.getUsername()));
         if (count > 0) {
@@ -54,36 +57,37 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    public LoginResponse login(LoginRequest request) {
-        // 登录限流：同一用户名 60 秒内最多尝试 5 次
-        String limitKey = RedisKeyConstant.RATE_LIMIT_LOGIN + request.getUsername();
-        Long attempts = redisTemplate.opsForValue().increment(limitKey);
-        if (attempts != null && attempts == 1) {
-            redisTemplate.expire(limitKey, 60, TimeUnit.SECONDS);
-        }
-        if (attempts != null && attempts > 5) {
-            throw new BusinessException(ErrorCode.TOO_MANY_REQUESTS.getCode(), "登录尝试过于频繁，请稍后再试");
-        }
+    public LoginResponse login(LoginRequest request, String clientIp) {
+        // 限流前置检查：只判"是否已被封锁"，不在这里计数（审计 §2.4）。
+        // 计数放在失败分支 —— 把成功/失败的尝试一律计入，会让攻击者仅凭垃圾请求
+        // 就把真用户锁在门外（反向账号锁定 DoS），而那一步不需要猜中任何口令。
+        authRateLimiter.checkLogin(request.getUsername(), clientIp);
 
         User user = userMapper.selectOne(
                 new LambdaQueryWrapper<User>().eq(User::getUsername, request.getUsername()));
         if (user == null || !passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+            // 失败才计数：账号维度记在 (账号, 来源IP) 对上，攻击者只能锁住自己那一格。
+            authRateLimiter.onLoginFailure(request.getUsername(), clientIp);
             throw new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "用户名或密码错误");
         }
         // 与 JwtAuthenticationFilter 共用同一判据：禁用既要拦住"新登录"，也要让"手里的旧 token"失效。
         // 这里只做前半段，后半段在过滤器里（审计 12-readiness-audit §1.1）。
+        // 注意本分支【不计失败】—— 口令是对的，被禁用不是"猜错了"。
         if (!UserStatusEnum.ENABLED.is(user.getStatus())) {
             throw new BusinessException(ErrorCode.FORBIDDEN.getCode(), "账号已被禁用");
         }
 
-        // 登录成功，清除限流计数
-        redisTemplate.delete(limitKey);
+        // 登录成功，清掉该 (账号, IP) 对的失败计数，让本人输错几次后立刻恢复正常
+        authRateLimiter.onLoginSuccess(request.getUsername(), clientIp);
 
         // 登录日志：记录最近登录时间（IP 留待后续补充）
         user.setLastLoginTime(LocalDateTime.now());
         userMapper.updateById(user);
 
-        String token = jwtTokenProvider.generateToken(user.getId(), user.getUsername(), user.getRole());
+        // 把口令哈希一并签进 token（pv 声明）：日后改密 ⇒ 库里哈希变 ⇒ 旧 token 立即失效。
+        // 详见 JwtTokenProvider.passwordVersion 与审计 12-readiness-audit §2.5。
+        String token = jwtTokenProvider.generateToken(
+                user.getId(), user.getUsername(), user.getRole(), user.getPassword());
         return new LoginResponse(token, "Bearer", jwtTokenProvider.getExpirationSeconds(), UserVO.from(user));
     }
 

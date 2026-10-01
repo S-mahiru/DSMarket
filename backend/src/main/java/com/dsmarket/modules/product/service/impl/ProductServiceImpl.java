@@ -171,7 +171,11 @@ public class ProductServiceImpl implements ProductService {
         // 首页推荐同属商城侧，口径须与列表页逐字一致（§4.8 落点 2）。
         // 漏掉这里，关闭店铺的商品会在首页"继续营业"，而列表里已经查不到 —— 两处口径分叉。
         ProductVisibility.apply(wrapper);
-        wrapper.last("LIMIT " + Math.min(limit, 20));
+        // 上界 20、下界 0（审计 §2.2）。缺下界时 `?limit=-5` 会拼出 `LIMIT -5`，
+        // PostgreSQL 直接报错 ⇒ 这个 permitAll 端点变成一条任人可触发的 500。
+        // 下界取 0 而不是 1：`LIMIT 0` 是合法 SQL（返回空列表，改动前就是这个行为），
+        // 夹到 1 会把一个本来正常的响应悄悄改掉 —— 本次只修真正坏掉的那一种输入。
+        wrapper.last("LIMIT " + Math.max(0, Math.min(limit, 20)));
         return productMapper.selectList(wrapper).stream().map(ProductListVO::from).toList();
     }
 

@@ -24,12 +24,17 @@ import java.io.IOException;
 import java.util.List;
 
 /**
- * JWT 认证过滤器：提取 Bearer Token → 校验（Redis 黑名单 + 用户状态）→ 注入 SecurityContext
+ * JWT 认证过滤器：提取 Bearer Token → 校验（Redis 黑名单 + 用户状态 + 口令版本）→ 注入 SecurityContext
  *
  * <p><b>为什么验签之后还要查一次库</b>（审计 12-readiness-audit §1.1 / §2.5）：
  * JWT 是自包含的，签发之后服务端对它没有任何控制力。只验签的话，「管理员禁用账号」在既有 token
  * 的剩余有效期（{@code jwt.expiration}，默认 24h）内<b>完全不生效</b> —— 登录接口拦得住新登录，
  * 拦不住手里已经拿着 token 的人。故此处补一次状态校验，让禁用<b>立即</b>生效。</p>
+ *
+ * <p><b>同一次查库顺带做了口令版本校验</b>（审计 §2.5 的另一半）：账号被禁用和口令被改是两件事，
+ * 前者靠 {@code status}，后者靠 {@code pv} 声明与当前口令哈希摘要比对。两者共用上面那次
+ * {@code selectById}，故口令这一半是<b>零额外查询</b>的。派生摘要的方法只有一处
+ * （{@link JwtTokenProvider#passwordVersion(String)}），两边不各写一份。</p>
  *
  * <p><b>角色仍取自 token，不取自这次查库的结果</b>：这是既有的已拍板行为
  * （REQ-20260912 §12.2 的 D7，「JWT {@code role} 为签发快照，改角色需重新登录」）。
@@ -77,6 +82,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 User user = userMapper.selectById(userId);
                 if (user == null || !UserStatusEnum.ENABLED.is(user.getStatus())) {
                     log.debug("token 有效但账号不可用，本请求按未认证处理：userId={}", userId);
+                    chain.doFilter(request, response);
+                    return;
+                }
+
+                // 口令版本校验：签名有效 ≠ 这枚 token 是「当前口令」签发的（审计 §2.5）。
+                // 「禁用即时生效」靠的是上面那次查库；但改密走的是另一条路 —— 账号状态没变，
+                // 旧 token 会在剩余有效期内继续可用，也就是常说的「我改密码是为了把别人踢下线」
+                // 落空的那种情形。这里拿库里刚读出来的口令哈希算一次摘要来比对。
+                // 代价为零额外查询：password 列随着上面那次 selectById 已经在手上。
+                String currentPasswordVersion = JwtTokenProvider.passwordVersion(user.getPassword());
+                String tokenPasswordVersion = claims.get(JwtTokenProvider.CLAIM_PASSWORD_VERSION, String.class);
+                if (currentPasswordVersion == null || !currentPasswordVersion.equals(tokenPasswordVersion)) {
+                    // 走这条路的两种情形：① 口令改过了；② token 没有 pv 声明（本修复上线前签发的），
+                    // 后者表现为一次性的「全体重新登录」—— 这是刻意的：若放行无声明 token，
+                    // 就等于给改密留了一个最长 24h 的失效盲区，而那正是本次要堵的东西。
+                    log.debug("token 有效但口令版本不匹配，本请求按未认证处理：userId={}", userId);
                     chain.doFilter(request, response);
                     return;
                 }

@@ -113,7 +113,7 @@ cd frontend && npm test
 
 ### 生产必需
 
-这三个在 `application-prod.yml` 里**都没有默认值**，未注入时后端**直接启动失败**（fail-fast），
+这四个在 `application-prod.yml` 里**都没有默认值**，未注入时后端**直接启动失败**（fail-fast），
 `deploy/start-prod.sh` / `.bat` 也会在起进程前先拦一道并说明原因：
 
 | 变量 | 说明 |
@@ -121,6 +121,7 @@ cd frontend && npm test
 | `JWT_SECRET` | JWT 签名密钥。不写默认值是为了不静默回落到仓库里公开的 dev 兜底值。生成：`openssl rand -base64 48` |
 | `DB_PASSWORD` | 数据库口令。原先默认 `postgres`，等于没有口令。 |
 | `REDIS_PASSWORD` | Redis 口令。原先整段没有 `password`，生产 Redis 无认证 —— 而它存着 JWT 黑名单（决定"已登出的 token 还算不算数"）与 AI 会话原文。生成：`openssl rand -base64 32` |
+| `AI_EVAL_HASH_SALT` | AI 评估留痕里 `userIdHash` 的 HMAC 盐。**它不是"可选的调优项"，是假名化成立的唯一前提**：`userId` 是自增主键（取值空间 1..N 的小整数），盐已知 ⇒ 日志里的哈希整张表毫秒级可反查，`UserHash` 承诺的"拿不到盐就无法枚举"变成空话。`application.yml` 的缺省值已随公开仓库泄露。生成：`openssl rand -base64 32`。⚠ **定了就别改** —— 改盐会让历史哈希与新日志对不上，论文按用户 join 断链。 |
 
 > **开发 / 测试环境不需要设置**：`application-dev.yml` 与 `application-test.yml` 里该口令回落到
 > `dsm_dev_redis`，与 `docker-compose.yml` 的默认值读的是**同名**变量 `REDIS_PASSWORD`。
@@ -140,7 +141,7 @@ cd frontend && npm test
 | `AI_MARKET` | 空 | 对话模型 API Key（未设置时回落 `AI_ASSISTANT_API_KEY`） |
 | `DASHSCOPE_API_KEY` | 空 | 向量模型 API Key |
 | `AI_LLM_BASE_URL` / `AI_LLM_MODEL` | DeepSeek | 对话模型接入点（OpenAI 兼容） |
-| `AI_EVAL_ENABLED` | `true` | AI 效果评估留痕开关 |
+| `AI_EVAL_ENABLED` | `true` | AI 效果评估留痕开关。**生产也是默认开**，且不因此免掉 `AI_EVAL_HASH_SALT`（见上表）—— 留痕是否真的在记，看启动日志里的 `[ai][c5]` 那一行，别靠推断 |
 
 未配置 AI Key 时，非 AI 模块照常可用。
 

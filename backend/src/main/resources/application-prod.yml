@@ -37,6 +37,18 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+  # 【安全】默认只绑回环（审计 §2.4）。
+  # 原先是 0.0.0.0:8080 —— 在咖啡厅/宿舍网里，同网段任何人可直连后端，绕过 Nginx
+  # （部署里 Nginx 才是唯一入口：deploy/nginx/nginx.conf 的 proxy_pass 就是
+  # http://127.0.0.1:8080，二者同机，故绑回环与现有部署自洽）。
+  #
+  # ⚠ 与下面 security.client-ip.trust-proxy-header 是【成对】的：
+  #   绑回环 ⇒ 只有本机进程能直连 ⇒ 反代写的 X-Real-IP 可信。
+  #   若把它改成 0.0.0.0（例如要做跨机演示），必须同时把 trust-proxy-header 改回 false，
+  #   否则任何人都能自带 X-Real-IP 伪造来源 IP，基于 IP 的限流会被零成本绕过。
+  #   需要临时放开时用环境变量覆盖，不要改这一行的默认值：
+  #     SERVER_ADDRESS=0.0.0.0   （同时必须 TRUST_PROXY_HEADER=false）
+  address: ${SERVER_ADDRESS:127.0.0.1}
 
 # 【安全】生产关闭 API 文档（审计 12-readiness-audit §1.6）。
 # springdoc 的依赖与 SecurityConfig 里 /api-docs/**、/swagger-ui/** 的 permitAll 都是全局的，
@@ -58,9 +70,56 @@ jwt:
   secret: ${JWT_SECRET}
   # 有效期与其它 jwt.* 配置继承 application.yml（86400），此处不重复，避免两处维护。
 
+# 【安全】AI 评估留痕的盐（审计 12-readiness-audit §2.8②）。
+#
+# 这不是"可选的调优项"，它是整套假名化成立的【唯一】前提：
+#   userIdHash = HMAC-SHA256(salt, userId)，而 userId 是 BIGINT 自增主键——
+#   取值空间就是 1..N 的小整数，盐一旦是已知值，整张表毫秒级可枚举反查。
+# application.yml 里那个缺省值 `${AI_EVAL_HASH_SALT:dsmarket-ai-eval-local}` 已随
+# 公开仓库泄露 ⇒ 用它在生产上算出的 userIdHash 是【可反查的】，UserHash 类注释承诺的
+# "只拿到日志（拿不到盐）的人无法枚举"会变成一句空话（伪匿名失效）。
+#
+# 故此处【故意不写默认值】。生成：openssl rand -base64 32
+#
+# ⚠⚠ 但【光靠上面这一行拦不住任何东西】—— 2026-09-21 真机实测证伪了本文的初稿：
+#   照抄上面 jwt.secret 那套（它是 @Value 绑定，缺环境变量会抛
+#   "Could not resolve placeholder 'JWT_SECRET'" 拒绝启动）在这里【不成立】。
+#   ai.eval.* 走 @ConfigurationProperties（Binder + PropertySourcesPlaceholdersResolver），
+#   而后者 ignoreUnresolvablePlaceholders = true ⇒ 解不出来【不抛异常】，
+#   会把 "${AI_EVAL_HASH_SALT}" 这个字符串【原样绑进字段】。实测：不注入环境变量时
+#   应用【照常启动】，盐变成上面那个写在仓库里、谁都能读到的固定串 ——
+#   与它想替换掉的公开默认值【等价】，而且全程静默。
+#   ⇒ 真正的判据不在 YAML，在代码：AiProperties.Eval#hasPrivateSalt() + AiEvalSaltGuard
+#     （非 dev/test、留痕开着、而盐不是机密 ⇒ 抛异常拒绝启动）。
+#   ⇒ 同一个 YAML 写法、两条绑定路径、两种结果：差别不在 YAML，在【绑定器】。
+#
+# ⚠ 与 jwt.secret 的差别在这条：这个值【定了就别改】—— 改盐会让全部历史 userIdHash
+#   与新日志对不上，论文按用户 join（P2-H3 沉淀曲线）断链。首次上线即固定。
+#
+# 注：本段只覆盖盐，**不覆盖 ai.eval.enabled** —— 留痕默认仍是开着的（继承
+# application.yml 的 true）。"生产必须自带机密盐"这件事本身即是采集合意，
+# 不再另设一道默认关闭，免得出现"看着正常、其实一条都没在采"的静默空洞。
+# 生产留痕的实际状态在启动日志里有一条 [ai][c5] 行写明，不靠推断。
+ai:
+  eval:
+    hash-salt: ${AI_EVAL_HASH_SALT}
+
 mybatis-plus:
   configuration:
     log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+
+# 【安全】信任边界（审计 §2.4）。生产置 true 的依据是上面那条 server.address 默认绑回环：
+# 后端只有 Nginx 一条路可进，而 Nginx 用 proxy_set_header X-Real-IP $remote_addr
+# 【覆盖写】该头（客户端自带的同名头会被盖掉），故取它作为客户端 IP 是可信的。
+#
+# ⚠ 这两个设置是一对，改一个必须改另一个：
+#   把 SERVER_ADDRESS 改成 0.0.0.0（或把后端直接暴露出去）之后，任何人仍可自带 X-Real-IP，
+#   此时必须 TRUST_PROXY_HEADER=false —— 否则 IP 维度的限流等于没有，
+#   而且从外部完全看不出来（每个假 IP 各占一个桶，谁都不会被拦）。
+#   ClientIpResolver 在启用时会在启动日志里打一条 WARN 复述这个前提，便于事后核对。
+security:
+  client-ip:
+    trust-proxy-header: ${TRUST_PROXY_HEADER:true}
 
 # 上传文件磁盘目录（/uploads/** 由此目录提供）
 web:

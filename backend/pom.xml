@@ -39,6 +39,21 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!--
+          健康检查（审计 12-readiness-audit §2.7）。
+
+          选 Actuator 而不是自己写一个 controller：探活要覆盖 PostgreSQL 与 Redis 两个**外部**依赖，
+          而"怎么探才算活"（连接校验、超时、异常归类）Actuator 已经有现成实现，
+          自己写等于把那几个坑重踩一遍。版本由 spring-boot-starter-parent 的 BOM 管，不手写版本号。
+
+          注意它**同时引入了一个新的对外面**：暴露哪些端点、显示多少细节，
+          由 application.yml 的 management 段与 SecurityConfig 共同收紧，两处都要读。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
         <!-- Security -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

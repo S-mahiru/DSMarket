@@ -38,6 +38,19 @@ if "%REDIS_PASSWORD%"=="" (
   exit /b 1
 )
 
+REM 【安全】未注入 AI_EVAL_HASH_SALT 时拒绝启动。
+REM 该盐是 AI 评估留痕里 userIdHash 假名化的【唯一】前提：userId 是自增主键
+REM （取值空间 1..N 的小整数），盐若是已知值，日志里的哈希整张表毫秒级可反查。
+REM application.yml 的缺省值已随公开仓库泄露，生产不可用它。
+if "%AI_EVAL_HASH_SALT%"=="" (
+  echo 错误：未设置 AI_EVAL_HASH_SALT，拒绝启动。
+  echo   盐已公开 ^=^> 用它算出的 userIdHash 可被反查，伪匿名失效。
+  echo   生成：openssl rand -base64 32
+  echo   然后：set AI_EVAL_HASH_SALT=上一步生成的值
+  echo   注意：定了就别改，改盐会让历史 userIdHash 与新日志对不上。
+  exit /b 1
+)
+
 echo ==^> 后端启动 ^(profile=prod, jar=target\dsmarket-backend-1.0.0.jar^)
 echo ==^> 日志：logs\dsmarket.log
 java -Xms256m -Xmx512m -jar target\dsmarket-backend-1.0.0.jar

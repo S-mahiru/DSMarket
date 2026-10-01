@@ -1,6 +1,31 @@
 server:
   port: 8080
 
+# ============================================
+# 健康检查（审计 12-readiness-audit §2.7）
+# ============================================
+# 此前后端没有任何存活探针：deploy/start-prod.sh 用 `exec java -jar` 跑在主机上，
+# 进程假死（线程池打满、DB 连接耗尽）时没人发现得了。
+#
+# 两个开关都是**收紧**用的，理由不是"顺手加上"，各自对应一种真实的信息泄露：
+management:
+  endpoints:
+    web:
+      exposure:
+        # 只暴露 health。写 "*" 会连带开出 /actuator/env、/actuator/configprops、
+        # /actuator/heapdump 等 —— 它们能读到运行时配置与堆转储，
+        # 是典型的"为修一个小问题开一个大洞"。新增端点必须显式加进这个列表。
+        include: health
+  endpoint:
+    health:
+      # show-details 三选一，这里刻意取最严的 never：
+      #   always         → 匿名可见 db/redis 连接串、组件版本（而本端点经 nginx /healthz 对公网开放）
+      #   when-authorized→ 没配 roles 时"任何已登录用户"都算 authorized，
+      #                    于是**任何一个普通买家**都能读到这些细节
+      #   never          → 外部只看得到 {"status":"UP"} / {"status":"DOWN"}，够监控用、不够踩点用
+      # 排查依赖故障时的细节改从服务端日志与 /actuator 的本机直连拿，不靠把这个开关放开。
+      show-details: never
+
 spring:
   profiles:
     active: dev
@@ -25,6 +50,42 @@ jwt:
   # 勿依赖本默认（已上传公开仓库，已知值不可作生产密钥）。
   secret: ${JWT_SECRET:dev-only-jwt-secret-8f3b21c7d94e-not-for-prod}
   expiration: 86400
+
+# ============================================
+# 安全（审计 12-readiness-audit §2.4）
+# ============================================
+security:
+  client-ip:
+    # 【信任边界】是否相信反向代理写下的客户端 IP 头。
+    #
+    # 只有在【后端不可能被绕过反代直连】时才可以置 true。默认 false ⇒ 取 TCP 层的
+    # remoteAddr，客户端伪造不了；代价是经过反代后拿到的是反代自己的地址，
+    # IP 维度退化成"只有一个桶"——退化，但不会假装自己限流了。
+    #
+    # 置 true 时【必须】同时保证 server.address 是回环地址（见 application-prod.yml）。
+    # 二者是成对的：绑 0.0.0.0 又信这个头 ⇒ 攻击者每次换一个假 IP 就能换一个限流桶，
+    # 限流看着生效实则零成本绕过。改任一项都要回来看这里。
+    trust-proxy-header: false
+    # nginx 用 proxy_set_header X-Real-IP $remote_addr 覆盖写，客户端自带的同名头会被盖掉。
+    # 刻意【不】用 X-Forwarded-For：那是追加语义，客户端可先塞一段伪造链。
+    header: X-Real-IP
+
+  auth-rate-limit:
+    # 登录 / 注册限流。测试 profile 也保持开启（见 application-test.yml 的说明）。
+    enabled: true
+    # 同一 (账号, 来源IP) 对的失败次数达此值即封锁
+    account-limit: 5
+    # 同一来源 IP 的失败次数达此值即封锁（拦密码喷洒：固定弱口令遍历用户名）
+    ip-limit: 20
+    # 同一来源 IP 在 register-window 内的注册次数上限
+    register-limit: 10
+    # 失败计数的记忆窗口。首次失败置上，后续失败【不刷新】——
+    # 刷新会让细水长流式尝试永远清不掉计数，等于把临时封锁变成永久封锁。
+    failure-window: 15m
+    register-window: 1h
+    # 首次达阈值的封锁时长，此后每多失败一次翻倍，封顶 max-block-seconds（递增退避）
+    base-block-seconds: 60
+    max-block-seconds: 1800
 
 springdoc:
   api-docs:
@@ -160,7 +221,12 @@ ai:
     dir: ${AI_EVAL_DIR:logs/ai-eval}   # 相对进程工作目录（从 backend 启动 → backend/logs/ai-eval）
     # userIdHash 的盐（HMAC-SHA256）。**改盐即断链**：历史哈希与新日志对不上，
     # P2-H3 沉淀曲线没法按用户 join —— 论文数据一旦开始采就固定此值。
-    # 缺省值只是本地占位（§7 已把"敏感字段本地环境存储"列为前提）；接真人数据前从环境变量注入。
+    #
+    # ⚠ 下面这个缺省值【已随公开仓库泄露】，因此它只是**本地占位**，不是任何环境的兜底：
+    #   userId 是 BIGINT 自增主键（取值空间 1..N 的小整数），拿一个已知的盐对它做
+    #   HMAC 枚举是毫秒级的事 ⇒ 用缺省盐算出的 userIdHash 等于明文，伪匿名不成立。
+    # application-prod.yml 已把本键覆盖为 ${AI_EVAL_HASH_SALT}（**故意不给默认值**，
+    # 未注入即启动失败）；dev/test 走这里。启动日志里有一条 [ai][c5] 行写明实际用的是哪个。
     hash-salt: ${AI_EVAL_HASH_SALT:dsmarket-ai-eval-local}
     content-max: 500   # 日志里问句原文截断上限（§2 content「≤500」；只影响留痕，不影响对话）
     # 答复原文截断上限（§2 未列补充键 answer）。比问句宽得多：答复没有 500 的产品上限，

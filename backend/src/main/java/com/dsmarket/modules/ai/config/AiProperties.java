@@ -245,13 +245,68 @@ public class AiProperties {
          */
         private String dir = "logs/ai-eval";
         /**
+         * 本地占位盐（<b>已随公开仓库泄露，只可用于本机</b>）。见 {@link #hashSalt}。
+         *
+         * <p>之所以做成常量而不是在 YAML 与 Java 里各写一遍字面量：它同时被三处需要——
+         * YAML 的缺省值、本字段的初始值、以及 {@code AiEvalRecorder} 启动时那条
+         * "现在用的是不是这个占位值"的播报（审计 §2.8②）。三处各写一份迟早分叉，
+         * 而分叉的表现恰好是那条播报**说了谎**（播报"用的是机密盐"，实际用的是占位值）。</p>
+         */
+        public static final String LOCAL_PLACEHOLDER_SALT = "dsmarket-ai-eval-local";
+
+        /**
          * {@code userIdHash} 的盐（HMAC-SHA256，见 {@code UserHash}）。
          *
          * <p><b>改盐即断链</b>：全部历史哈希与新日志对不上，P2-H3 沉淀曲线没法按用户 join。
-         * 论文数据一旦开始采，此值就固定。缺省值只是本地环境的占位（§7 已把"敏感字段本地
-         * 环境存储"列为前提），真接真人数据前应从环境变量注入。</p>
+         * 论文数据一旦开始采，此值就固定。</p>
+         *
+         * <p><b>缺省值只是本地环境的占位，且它已经公开了</b>（审计 §2.8②）：本仓库是公开的，
+         * 这个字面量谁都能读到，而 {@code userId} 是自增主键、取值空间是 1..N 的小整数 ——
+         * 拿已知盐对小整数空间做 HMAC 枚举是毫秒级的事。也就是说：
+         * <b>用缺省盐算出的 userIdHash 是明文的一种写法，不是假名化</b>。</p>
+         *
+         * <p>因此 {@code application-prod.yml} 把这个键覆盖成了
+         * {@code ${AI_EVAL_HASH_SALT}}（<b>故意不给默认值</b>，未注入即启动失败）。
+         * 本字段的初始值只服务于 dev/test 与单测，<b>不构成生产的兜底</b>。</p>
          */
-        private String hashSalt = "dsmarket-ai-eval-local";
+        private String hashSalt = LOCAL_PLACEHOLDER_SALT;
+
+        /**
+         * 这个盐算不算<b>机密</b>——即：拿到日志、但没有配置权限的人，能不能靠枚举反查 userId。
+         *
+         * <p>三种情况一律判<b>不机密</b>，每一种都是一条真实踩过的路：</p>
+         * <ol>
+         *   <li><b>空 / null</b>：等于无盐，退化成对自增主键的裸哈希；</li>
+         *   <li><b>等于 {@link #LOCAL_PLACEHOLDER_SALT}</b>：那个字面量已随公开仓库泄露；</li>
+         *   <li><b>以 {@code ${} 开头</b>——占位符<b>没解析成功</b>，被原样绑了进来。
+         *       这一条是 2026-09-21 真机实测补上的，也是本条判据存在的真正原因：
+         *       {@code @ConfigurationProperties} 的绑定走 {@code Binder} +
+         *       {@code PropertySourcesPlaceholdersResolver}，而后者构造时传的是
+         *       {@code ignoreUnresolvablePlaceholders = true} ——
+         *       <b>缺环境变量时它不抛异常，而是把 {@code "${AI_EVAL_HASH_SALT}"} 这个
+         *       字符串本身绑进来</b>。</li>
+         * </ol>
+         *
+         * <p><b>⇒ 结论：对 {@code @ConfigurationProperties} 绑定的键，"prod 里不写默认值"
+         * 这道 YAML 闸是失效的。</b>对照实测（同一次真机启动，prod profile）：</p>
+         * <ul>
+         *   <li>{@code jwt.secret}（{@code @Value} 绑定）→ 抛
+         *       {@code PlaceholderResolutionException: Could not resolve placeholder 'JWT_SECRET'}，
+         *       应用<b>拒绝启动</b> —— §1.1 的 fail-fast 是真的；</li>
+         *   <li>{@code ai.eval.hash-salt}（{@code @ConfigurationProperties} 绑定）→
+         *       <b>应用照常启动</b>，盐变成 {@code "${AI_EVAL_HASH_SALT}"} 这个
+         *       【写在仓库里、谁都能读到】的固定串，与原来的公开默认值<b>等价</b>，
+         *       而且全程<b>静默</b>。</li>
+         * </ul>
+         * <p>差别在于：口令绑错了会在连接期认证失败（响亮），而盐绑错了是一个<b>完全可用的
+         * 值</b>（安静）。所以这条判据必须落在代码里，不能只靠 YAML。</p>
+         */
+        public boolean hasPrivateSalt() {
+            return hashSalt != null
+                    && !hashSalt.isBlank()
+                    && !LOCAL_PLACEHOLDER_SALT.equals(hashSalt)
+                    && !hashSalt.startsWith("${");
+        }
         /** 日志里问句原文的截断上限（§2 content「≤500」的落地；只影响留痕，不影响对话） */
         private int contentMax = 500;
         /**

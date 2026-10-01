@@ -48,7 +48,17 @@ public class SecurityConfig {
                                 // /api/v1/admin/** 之前（规则按声明顺序、首个命中即生效）。
                                 "/api/v1/shops/**",
                                 "/uploads/**",
-                                "/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/swagger-resources/**"
+                                "/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/swagger-resources/**",
+                                // 健康检查（审计 §2.7）。**必须是这一条精确路径，不能写成
+                                // "/actuator/**"** —— 后者把 actuator 其余端点一并开成匿名可读，
+                                // 而 application.yml 的 exposure.include 只放出了 health，
+                                // 两道闸是各管一段的：这个列表管"要不要登录"，include 管"存不存在"。
+                                // 这里收紧成单条，等于给"将来有人往 include 里加了 env/configprops"
+                                // 留了一道仍然需要登录的兜底。
+                                //
+                                // 编排层/监控不可能持有 JWT，所以它必须匿名可达，没有别的选法。
+                                // 响应体不含组件细节（show-details: never），暴露面就是 UP/DOWN 两个词。
+                                "/actuator/health"
                         ).permitAll()
                         // 管理端：需 ADMIN 角色
                         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")

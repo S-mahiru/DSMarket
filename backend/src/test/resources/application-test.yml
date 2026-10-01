@@ -18,3 +18,21 @@ mybatis-plus:
   configuration:
     # 测试环境关闭 SQL 日志，避免输出噪音
     map-underscore-to-camel-case: true
+
+security:
+  auth-rate-limit:
+    # 【为什么是"抬高阈值"而不是 enabled: false】
+    #
+    # 关掉能力是这类改动里最容易造出假 PASS 的做法：限流整段写坏了，"其余 600+ 用例全绿"
+    # 也照样成立，因为没有任何用例碰过它。这里保持 enabled=true 让代码路径真的跑起来
+    # （INCR、EXPIRE、比较都执行），只把阈值抬到不可能达到。
+    #
+    # 【不这样做会踩的坑】MockMvc 的 remoteAddr 恒为 127.0.0.1，且 Redis 跨测试轮次【不】清空：
+    #   - 登录限流按失败计数，而 MalformedRequestContractIntegrationTest 每次运行都会做
+    #     一次失败登录（用户名 nobody）—— 阈值若取默认 5，本地连跑 5 次后该用例就会收到
+    #     429，现场看起来像一次毫无关联的回归。
+    #   - 注册按尝试计数，阈值同理。
+    # 真实阈值由 AuthRateLimitIntegrationTest 用 @SpringBootTest(properties=...) 显式下调来验证。
+    account-limit: 1000000
+    ip-limit: 1000000
+    register-limit: 1000000

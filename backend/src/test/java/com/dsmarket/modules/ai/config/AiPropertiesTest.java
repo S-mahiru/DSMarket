@@ -113,5 +113,11 @@ class AiPropertiesTest {
         assertEquals(500, e.getContentMax(), "§2 content「≤500」");
         assertFalse(e.getHashSalt().isBlank(),
                 "盐缺失会让 userIdHash 退化成可枚举的裸哈希 —— 绝不留空默认");
+        // 钉住"字段默认值 == 那个常量"（审计 §2.8②）：AiEvalRecorder 启动时会拿这个常量
+        // 去比对，判断现在用的是不是公开占位盐，并把结论打进启动日志。两处一旦分叉，
+        // 结果是那条播报【说了谎】—— 播"已配置"，实际用的是谁都能读到的占位值。
+        // 生产侧的兜底不在这里，而在 application-prod.yml（见 ProdRequiredSecretsTest）。
+        assertEquals(AiProperties.Eval.LOCAL_PLACEHOLDER_SALT, e.getHashSalt(),
+                "字段默认值必须引用同一个常量，否则启动播报会说谎");
     }
 }

@@ -11,9 +11,9 @@ BACKEND_DIR="$(cd "${SCRIPT_DIR}/../backend" && pwd)"
 
 export SPRING_PROFILES_ACTIVE="${SPRING_PROFILES_ACTIVE:-prod}"
 
-# 【安全】三个生产机密在 application-prod.yml 里都【没有默认值】，缺了后端本来也起不来
+# 【安全】四个生产机密在 application-prod.yml 里都【没有默认值】，缺了后端本来也起不来
 # （Spring 报 Could not resolve placeholder）。这里提前拦一道，是为了把原因和生成方法说清楚，
-# 而不是甩一句占位符解析失败。写成函数而非三份拷贝：漏加一个变量的代价是静默回落，不该靠人盯。
+# 而不是甩一句占位符解析失败。写成函数而非多份拷贝：漏加一个变量的代价是静默回落，不该靠人盯。
 require_env() {
   local name="$1" hint="$2"
   if [[ -z "${!name:-}" ]]; then
@@ -32,6 +32,13 @@ require_env DB_PASSWORD \
 require_env REDIS_PASSWORD \
   "原先整段没有 password，生产 Redis 处于无认证状态（里面存着 JWT 黑名单与 AI 会话原文）。
   生成并导出：export REDIS_PASSWORD=\"\$(openssl rand -base64 32)\""
+# 审计 §2.8②：这个盐是 AI 评估留痕里 userIdHash 假名化的【唯一】前提 ——
+# userId 是自增主键（取值空间 1..N 的小整数），盐若是已知值，日志里的哈希
+# 整张表毫秒级可反查。application.yml 的缺省值已随公开仓库泄露，生产不可用它。
+require_env AI_EVAL_HASH_SALT \
+  "盐已公开 ⇒ 用它算出的 userIdHash 可被反查，伪匿名失效。
+  生成并导出：export AI_EVAL_HASH_SALT=\"\$(openssl rand -base64 32)\"
+  ⚠ 定了就别改：改盐会让历史 userIdHash 与新日志对不上（论文按用户 join 断链）。"
 
 # 其余可按需覆盖：
 # export DB_HOST=your-db-host  export DB_PORT=5432  export DB_NAME=dsmarket_prod

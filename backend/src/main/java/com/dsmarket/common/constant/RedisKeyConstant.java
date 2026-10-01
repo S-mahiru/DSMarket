@@ -3,7 +3,21 @@ package com.dsmarket.common.constant;
 public interface RedisKeyConstant {
 
     String TOKEN_BLACKLIST = "dsm:token:blacklist:";
-    String RATE_LIMIT_LOGIN = "dsm:rate:limit:";
+    /**
+     * 登录限流命名空间（审计 §2.4）。实际键形如：
+     * <ul>
+     *   <li>{@code dsm:rate:login:f:acct:{账号哈希}:{IP}} —— 失败计数（账号×来源IP 对）</li>
+     *   <li>{@code dsm:rate:login:f:ip:{IP}} —— 失败计数（仅来源IP，拦密码喷洒）</li>
+     *   <li>{@code dsm:rate:login:b:acct|ip:…} —— 封锁标记：<b>存在即封锁，TTL 即剩余封锁时长</b></li>
+     * </ul>
+     *
+     * <p>账号部分是 SHA-256 十六进制而非用户名原文：用户名里可能带 {@code :}
+     * （{@code LoginRequest.username} 只校验非空），而 IPv6 地址<b>本身</b>就带 {@code :}，
+     * 直接把两个变量拼进键会造出可碰撞的键（{@code a:b}+{@code c} 与 {@code a}+{@code b:c} 同形）。</p>
+     */
+    String RATE_LIMIT_LOGIN = "dsm:rate:login:";
+    /** 注册限流命名空间（审计 §2.4）：{@code dsm:rate:register:ip:{IP}}，按<b>尝试次数</b>计 */
+    String RATE_LIMIT_REGISTER = "dsm:rate:register:";
     String ORDER_SEQ = "dsm:order:seq:";
     String CART_CACHE = "dsm:cart:cache:";
 

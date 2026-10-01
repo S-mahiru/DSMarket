@@ -12,11 +12,14 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.InvalidMediaTypeException;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.io.IOException;
@@ -85,6 +88,76 @@ public class GlobalExceptionHandler {
         FieldError fieldError = e.getBindingResult().getFieldError();
         String message = fieldError != null ? fieldError.getDefaultMessage() : "参数校验失败";
         return respond(e, HttpStatus.BAD_REQUEST, 400, message, request, response);
+    }
+
+    /**
+     * 数字解析失败 → 400，<b>不回显 JDK 原文</b>（审计 §2.8）。
+     *
+     * <p><b>为什么单拎出来</b>：{@code NumberFormatException} 是 {@code IllegalArgumentException}
+     * 的子类，原先落到下面那个处理器上，于是 {@code e.getMessage()} 被原样回传 ——
+     * 而它是 JDK 的解析器文案，形如 {@code For input string: "null"}（缺字段时
+     * `Long.valueOf(String.valueOf(body.get("productId")))` 就是这个结果）、
+     * 或者把用户输入的原字符串带出去。</p>
+     *
+     * <p>这与 {@link #handleIllegalArgument} 刻意回显消息的既有做法<b>不冲突</b>：
+     * 那一类回显的是我们自己写的业务文案（"数量需大于0"），有信息量、也该给用户看；
+     * 这一类回显的是框架内部细节，对用户零价值。Spring 按异常继承深度选最具体的处理器，
+     * 故本方法会稳定地抢在父类那个之前。</p>
+     */
+    @ExceptionHandler(NumberFormatException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNumberFormat(NumberFormatException e,
+                                                                HttpServletRequest request,
+                                                                HttpServletResponse response)
+            throws IOException {
+        if (isStreaming(response)) {
+            return noBody(response, e);
+        }
+        // 原文只进服务端日志，给排查留线索；客户端拿到的是固定文案。
+        log.warn("参数解析失败（原文不外泄）：{}", e.getMessage());
+        return respond(e, HttpStatus.BAD_REQUEST, ErrorCode.BAD_REQUEST.getCode(),
+                "参数格式错误", request, response);
+    }
+
+    /**
+     * 「客户端发来的东西不成形」→ 400（审计 §2.2 续 / §2.8）。
+     *
+     * <p><b>这三个此前全是 500。</b>它们没有共同祖先落在已有的任何处理器上
+     * （{@code MethodArgumentTypeMismatchException} 继承 {@code PropertyAccessException} →
+     * {@code BeansException}，<b>不是</b> {@code IllegalArgumentException}），
+     * 于是统统落到 {@link #handleException} 兜底 —— 表现是：
+     * 客户端发个畸形 JSON，服务端不但回"服务器内部错误"，还记一条带栈的 ERROR。
+     * 把客户端的问题记成服务端故障，等于用噪音淹没真故障。</p>
+     *
+     * <table>
+     *   <tr><th>异常</th><th>触发例</th></tr>
+     *   <tr><td>{@code MethodArgumentTypeMismatchException}</td>
+     *       <td>{@code /products/featured?limit=abc}（{@code int} 参数收到非数字）</td></tr>
+     *   <tr><td>{@code HttpMessageNotReadableException}</td>
+     *       <td>请求体是畸形 JSON，或 {@code @RequestBody} 该有 body 却一个字节都没给</td></tr>
+     *   <tr><td>{@code ServletRequestBindingException}</td>
+     *       <td>缺必填的 {@code @RequestParam} / 请求头</td></tr>
+     * </table>
+     *
+     * <p><b>注意本方法一并改变了路径变量的行为</b>：{@code @PathVariable Long id} 收到非数字
+     * 也从 500 变成 400。这不影响 {@code REQ-20260913} A7 的取舍 —— 那条是为了避开
+     * {@code /shops/self} 与 {@code /shops/{id}} 的冲突（想让"不存在"回 404），
+     * 而 400 同样<b>不是</b> 404，泄露资源存在性的说法不成立，故该决定依然成立。</p>
+     *
+     * <p>回显固定文案，不回显 {@code e.getMessage()}：这几个异常的 message 里带着
+     * 用户输入原文与框架内部细节（如 {@code JSON parse error: Unexpected end-of-input ...}）。</p>
+     */
+    @ExceptionHandler({MethodArgumentTypeMismatchException.class, HttpMessageNotReadableException.class,
+            ServletRequestBindingException.class})
+    public ResponseEntity<ApiResponse<Void>> handleMalformedRequest(Exception e,
+                                                                    HttpServletRequest request,
+                                                                    HttpServletResponse response)
+            throws IOException {
+        if (isStreaming(response)) {
+            return noBody(response, e);
+        }
+        log.warn("请求不成形（按客户端错误处理）：{}", e.getMessage());
+        return respond(e, HttpStatus.BAD_REQUEST, ErrorCode.BAD_REQUEST.getCode(),
+                "请求参数不合法", request, response);
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
